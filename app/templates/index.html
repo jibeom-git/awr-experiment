@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AWR Robot Dashboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; }
+
+  header { background: #16213e; padding: 16px 24px;
+           display: flex; align-items: center; justify-content: space-between; }
+  header h1 { font-size: 1.3rem; color: #0f9; }
+  #status-dot { width: 12px; height: 12px; border-radius: 50%;
+                background: #0f9; display: inline-block; margin-right: 8px; }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px; }
+
+  .card { background: #16213e; border-radius: 12px; padding: 16px; }
+  .card h2 { font-size: 0.9rem; color: #0af; margin-bottom: 10px;
+             text-transform: uppercase; letter-spacing: 1px; }
+
+  .cam-feed { width: 100%; border-radius: 8px; background: #000; }
+
+  /* 센서 수치 */
+  .telem-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .telem-item { background: #0d1b2a; border-radius: 8px; padding: 10px; }
+  .telem-item .label { font-size: 0.75rem; color: #888; margin-bottom: 4px; }
+  .telem-item .value { font-size: 1.1rem; font-weight: bold; color: #0f9; }
+
+  /* 조종 패널 */
+  .control-panel { grid-column: 1 / -1; }
+  .dpad { display: grid; grid-template-columns: repeat(3, 64px);
+          grid-template-rows: repeat(3, 64px); gap: 8px;
+          justify-content: center; margin: 16px 0; }
+  .dpad button { background: #0d1b2a; border: 2px solid #0af; border-radius: 10px;
+                 color: #0af; font-size: 1.4rem; cursor: pointer;
+                 transition: background 0.15s; }
+  .dpad button:hover, .dpad button.active { background: #0af; color: #000; }
+  .dpad .empty { visibility: hidden; }
+
+  .speed-row { display: flex; align-items: center; gap: 12px;
+               justify-content: center; margin-top: 8px; }
+  .speed-row label { color: #888; font-size: 0.85rem; }
+  input[type=range] { width: 200px; accent-color: #0af; }
+  #speed-val { color: #0f9; font-weight: bold; min-width: 40px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span id="status-dot"></span>AWR Robot Dashboard</h1>
+  <span id="ts" style="color:#888;font-size:0.8rem;"></span>
+</header>
+
+<div class="grid">
+  <!-- RGB 카메라 -->
+  <div class="card">
+    <h2>RGB Camera</h2>
+    <img class="cam-feed" src="/rgb_feed" alt="RGB">
+  </div>
+
+  <!-- 깊이 카메라 -->
+  <div class="card">
+    <h2>Depth Camera</h2>
+    <img class="cam-feed" src="/depth_feed" alt="Depth">
+  </div>
+
+  <!-- 센서 수치 -->
+  <div class="card">
+    <h2>Sensor Telemetry</h2>
+    <div class="telem-grid">
+      <div class="telem-item">
+        <div class="label">Accel X / Y / Z (g)</div>
+        <div class="value" id="accel">--</div>
+      </div>
+      <div class="telem-item">
+        <div class="label">Gyro X / Y / Z (°/s)</div>
+        <div class="value" id="gyro">--</div>
+      </div>
+      <div class="telem-item">
+        <div class="label">Load Cell (raw)</div>
+        <div class="value" id="weight">--</div>
+      </div>
+      <div class="telem-item">
+        <div class="label">Ultrasonic (cm)</div>
+        <div class="value" id="distance">--</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 수동 조종 -->
+  <div class="card control-panel">
+    <h2>Manual Control</h2>
+    <div class="dpad">
+      <div class="empty"></div>
+      <button id="btn-forward"  onclick="sendCmd('forward')">▲</button>
+      <div class="empty"></div>
+      <button id="btn-left"     onclick="sendCmd('left')">◀</button>
+      <button id="btn-stop"     onclick="sendCmd('stop')">■</button>
+      <button id="btn-right"    onclick="sendCmd('right')">▶</button>
+      <div class="empty"></div>
+      <button id="btn-backward" onclick="sendCmd('backward')">▼</button>
+      <div class="empty"></div>
+    </div>
+    <div class="speed-row">
+      <label>Speed</label>
+      <input type="range" id="speed" min="20" max="100" value="50"
+             oninput="document.getElementById('speed-val').textContent=this.value+'%'">
+      <span id="speed-val">50%</span>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── 텔레메트리 폴링 ────────────────────────────────────
+function updateTelemetry() {
+  fetch('/telemetry')
+    .then(r => r.json())
+    .then(d => {
+      const a = d.accel;
+      const g = d.gyro;
+      document.getElementById('accel').textContent =
+        `${a.x.toFixed(2)} / ${a.y.toFixed(2)} / ${a.z.toFixed(2)}`;
+      document.getElementById('gyro').textContent =
+        `${g.x.toFixed(2)} / ${g.y.toFixed(2)} / ${g.z.toFixed(2)}`;
+      document.getElementById('weight').textContent = d.weight;
+      document.getElementById('distance').textContent = d.distance + ' cm';
+      document.getElementById('ts').textContent =
+        new Date().toLocaleTimeString();
+    })
+    .catch(() => {
+      document.getElementById('status-dot').style.background = '#f44';
+    });
+}
+setInterval(updateTelemetry, 200);
+
+// ── 모터 조종 ──────────────────────────────────────────
+function sendCmd(cmd) {
+  const speed = document.getElementById('speed').value;
+  fetch('/control', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({cmd, speed})
+  });
+
+  // 버튼 시각 피드백
+  document.querySelectorAll('.dpad button').forEach(b => b.classList.remove('active'));
+  const btn = document.getElementById('btn-' + cmd);
+  if (btn) btn.classList.add('active');
+}
+
+// ── 키보드 조종 ────────────────────────────────────────
+const keyMap = {
+  'ArrowUp': 'forward', 'w': 'forward',
+  'ArrowDown': 'backward', 's': 'backward',
+  'ArrowLeft': 'left', 'a': 'left',
+  'ArrowRight': 'right', 'd': 'right',
+  ' ': 'stop'
+};
+document.addEventListener('keydown', e => {
+  if (keyMap[e.key]) { e.preventDefault(); sendCmd(keyMap[e.key]); }
+});
+document.addEventListener('keyup', e => {
+  if (keyMap[e.key] && keyMap[e.key] !== 'stop') sendCmd('stop');
+});
+</script>
+</body>
+</html>

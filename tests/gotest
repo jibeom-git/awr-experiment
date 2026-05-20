@@ -1,0 +1,25 @@
+# ~/insite/tests/gotest.py
+
+import time
+import sys
+sys.path.append('/home/pi/insite/tests')
+
+import Move
+
+if __name__ == '__main__':
+    try:
+        Move.setup()
+        
+        # speed=60: 0~100 범위, 적당한 속도
+        # direction=1: 전진
+        # turn='no': 직진
+        Move.move(60, 1, 'no')
+        
+        time.sleep(3)   # 3초 주행
+        
+        Move.motorStop()
+        
+    except KeyboardInterrupt:
+        Move.destroy()
+    finally:
+        Move.destroy()

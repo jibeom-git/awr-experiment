@@ -1,9 +1,7 @@
 # sensors/camera.py
-# Raspberry Pi 카메라 드라이버 (picamera2 기반)
-# OV5647 CSI 카메라
-
 from picamera2 import Picamera2
 import numpy as np
+import cv2
 
 class Camera:
     def __init__(self, width=640, height=480):
@@ -15,8 +13,9 @@ class Camera:
         self.cam.start()
 
     def capture(self) -> np.ndarray:
-        """BGR numpy 배열로 프레임 반환 (OpenCV 호환)"""
         frame = self.cam.capture_array()
+        # 카메라가 거꾸로 장착되어 있어 180도 회전
+        frame = cv2.rotate(frame, cv2.ROTATE_180)
         return frame
 
     def close(self):
