@@ -7,3 +7,4 @@ Log/
 dist/
 build/
 .env
+*.bak

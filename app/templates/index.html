@@ -152,17 +152,55 @@ function sendCmd(cmd) {
 
 // ── 키보드 조종 ────────────────────────────────────────
 const keyMap = {
-  'ArrowUp': 'forward', 'w': 'forward',
-  'ArrowDown': 'backward', 's': 'backward',
-  'ArrowLeft': 'left', 'a': 'left',
-  'ArrowRight': 'right', 'd': 'right',
+  'ArrowUp': 'forward',
+  'w': 'forward',
+
+  'ArrowDown': 'backward',
+  's': 'backward',
+
+  'ArrowLeft': 'left',
+  'a': 'left',
+
+  'ArrowRight': 'right',
+  'd': 'right',
+
   ' ': 'stop'
 };
+
+// 눌린 키 상태 저장
+const pressedKeys = {};
+
+// 방향키 기본 스크롤 방지
+window.addEventListener('keydown', e => {
+  if (keyMap[e.key]) {
+    e.preventDefault();
+  }
+}, false);
+
+// 키 누름
 document.addEventListener('keydown', e => {
-  if (keyMap[e.key]) { e.preventDefault(); sendCmd(keyMap[e.key]); }
+
+  if (!keyMap[e.key]) return;
+
+  // 이미 눌린 상태면 무시 (중복 전송 방지)
+  if (pressedKeys[e.key]) return;
+
+  pressedKeys[e.key] = true;
+
+  sendCmd(keyMap[e.key]);
 });
+
+// 키 뗌
 document.addEventListener('keyup', e => {
-  if (keyMap[e.key] && keyMap[e.key] !== 'stop') sendCmd('stop');
+
+  if (!keyMap[e.key]) return;
+
+  pressedKeys[e.key] = false;
+
+  // stop 키 제외
+  if (keyMap[e.key] !== 'stop') {
+    sendCmd('stop');
+  }
 });
 </script>
 </body>

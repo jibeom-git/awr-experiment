@@ -22,6 +22,11 @@ GYRO_SCALE  = 131.0    # ±250°/s 범위 → LSB/(°/s)
 class MPU6050:
     def __init__(self):
         self.bus = smbus2.SMBus(BUS_NUM)
+        self.gyro_offset = {
+            'x': 0.0,
+            'y': 0.0,
+            'z': 0.0
+        }
         # 슬립 모드 해제 (PWR_MGMT_1 레지스터에 0 기록)
         self.bus.write_byte_data(ADDR, PWR_MGMT_1, 0x00)
         time.sleep(0.1)
@@ -40,13 +45,28 @@ class MPU6050:
             'y': round(self._read_word_2c(ACCEL_XOUT_H + 2) / ACCEL_SCALE, 4),
             'z': round(self._read_word_2c(ACCEL_XOUT_H + 4) / ACCEL_SCALE, 4),
         }
+    def get_gyro_raw(self) -> dict:
+    # """보정 전 원본 자이로 값"""
 
-    def get_gyro(self) -> dict:
-        """자이로 데이터 반환 (단위: °/s)"""
         return {
             'x': round(self._read_word_2c(GYRO_XOUT_H)     / GYRO_SCALE, 4),
             'y': round(self._read_word_2c(GYRO_XOUT_H + 2) / GYRO_SCALE, 4),
             'z': round(self._read_word_2c(GYRO_XOUT_H + 4) / GYRO_SCALE, 4),
+        }
+
+    def get_gyro(self) -> dict:
+    # offset 보정된 자이로 값
+
+        gyro = self.get_gyro_raw()
+
+        gyro['x'] -= self.gyro_offset['x']
+        gyro['y'] -= self.gyro_offset['y']
+        gyro['z'] -= self.gyro_offset['z']
+
+        return {
+            'x': round(gyro['x'], 4),
+            'y': round(gyro['y'], 4),
+            'z': round(gyro['z'], 4),
         }
 
     def close(self):
