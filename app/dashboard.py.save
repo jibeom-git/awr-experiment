@@ -1,5 +1,7 @@
 # app/dashboard.py
-# Flask 통합 대시보드 서버
+# Flask 통합 대시보드 (Astra RGB-D 동시 송출 최종본)
+# 실행: python app/dashboard.py
+# 접속: http://192.168.0.50:5000
 
 import sys, os, time, threading, copy
 sys.path.insert(0, '/home/pi/insite')
@@ -13,15 +15,18 @@ app = Flask(__name__, template_folder='templates', static_folder='static')
 # ══════════════════════════════════════════════════════
 # 로드셀 설정값
 # ══════════════════════════════════════════════════════
-HX711_REF_UNIT = -262.5   # 200g 기준 캘리브레이션
-HX711_DEADZONE = 20.0     # ±20g 이하는 0으로 처리
-HX711_SMOOTH   = 20       # 이동평균 샘플 수
+HX711_REF_UNIT    = -264.5  # 200g 기준 캘리브레이션
+HX711_DEADZONE    = 20.0     # ±20g 이하는 0으로 처리
+HX711_SMOOTH      = 20       # 이동평균 샘플 수
+HX711_SPIKE       = 50.0     # 이상값 필터 임계값 (g)
+HX711_STABLE_COUNT = 10      # 10회 연속 변화 없으면 재영점
+HX711_STABLE_THR   = 10.0   # 변화량 10g 이하면 안정됐다고 판단
 
 # ══════════════════════════════════════════════════════
 # 센서 초기화
 # ══════════════════════════════════════════════════════
 
-# ── RGB 카메라 ────────────────────────────────────────
+# ── RGB 카메라 (외장) ──────────────────────────────────
 try:
     from sensors.camera import Camera
     cam = Camera(width=640, height=480)
@@ -36,6 +41,7 @@ except Exception as e:
 try:
     from sensors.astra import AstraCamera
     astra = AstraCamera()
+    astra.start()  # [수정] 통합 드라이버의 스트림 엔진 가동 명령 명시적 호출
     ASTRA_AVAILABLE = True
     print("[OK]   Astra 깊이 카메라")
 except Exception as e:
@@ -60,8 +66,7 @@ try:
     hx711 = HX711()
     time.sleep(1)
     hx711.REF_UNIT_A = HX711_REF_UNIT
-    print("  로드셀에 아무것도 올리지 마세요 (5초 후 영점 설정)")
-    time.sleep(5)
+    print("  바구니를 로드셀 위에 올려주세요 (영점 설정 중...)")
     hx711.tare(samples=50)
     HX711_AVAILABLE = True
     print("[OK]   HX711 로드셀")
@@ -121,25 +126,13 @@ print(f"│ 모터        : {'✓ OK  ' if MOTOR_AVAILABLE else '✗ SKIP'} │"
 print("└─────────────────────────────┘")
 print()
 
-# #경로학습
-# from core.waypoint_recorder import WaypointRecorder
-# from core.heading_tracker   import HeadingTracker
-# from core.waypoint_runner   import WaypointRunner
-
-# recorder = WaypointRecorder()
-# if IMU_AVAILABLE:
-#     heading = HeadingTracker(imu)
-#     heading.start()
-# else:
-#     heading = None
-
 # ══════════════════════════════════════════════════════
 # 공유 상태
 # ══════════════════════════════════════════════════════
-lock             = threading.Lock()
-latest_rgb       = None
-latest_depth     = None
-latest_astra_rgb = None
+lock         = threading.Lock()
+latest_rgb   = None
+latest_depth = None
+latest_astra_rgb = None  # [추가] Astra 내장 컬러 영상 버퍼 전역 변수 선언
 latest_telem = {
     'accel':    {'x': 0.0, 'y': 0.0, 'z': 0.0},
     'gyro':     {'x': 0.0, 'y': 0.0, 'z': 0.0},
@@ -149,15 +142,14 @@ latest_telem = {
 }
 
 # ══════════════════════════════════════════════════════
-# 로드셀 이동평균 버퍼
+# 로드셀 상태 변수
 # ══════════════════════════════════════════════════════
-_weight_buf = []
+_weight_buf    = []
+_stable_count  = 0
+_last_avg      = 0.0
 
 def _read_weight_stable():
     global _weight_buf
-
-    if hx711 is None:
-        return 0.0
 
     raw = hx711.get_grams()
 
@@ -171,6 +163,11 @@ def _read_weight_stable():
     if abs(avg) <= HX711_DEADZONE:
         return 0.0
     return round(avg, 1)
+      print(f"[HX711] 자동 재영점 완료 (크리프 보정, avg={avg:.1f}g)")
+        return 0.0
+    if abs(avg) <= HX711_DEADZONE:
+        return 0.0
+    return round(avg, 1)
 
 # ══════════════════════════════════════════════════════
 # 백그라운드 스레드
@@ -178,7 +175,7 @@ def _read_weight_stable():
 
 def rgb_loop():
     global latest_rgb
-    if not CAM_AVAILABLE or cam is None:
+    if not CAM_AVAILABLE:
         return
     while True:
         try:
@@ -190,52 +187,37 @@ def rgb_loop():
             print(f"[RGB] {e}")
             time.sleep(1)
 
+
 def depth_loop():
-    global latest_depth
+    """
+    [수정] 단일 루프 안에서 Astra 드라이버의 get_frames()를 호출하여 
+    Depth와 내장 컬러 영상을 동시 파싱함으로써 파일 디스크립터 간섭을 원천 방지합니다.
+    """
+    global latest_depth, latest_astra_rgb
     if not ASTRA_AVAILABLE:
         return
     while True:
         try:
-            depth = astra.get_depth_frame()
-            if depth is None:
-                time.sleep(0.05)
-                continue
-            depth_vis  = np.clip(depth, 100, 1000).astype(np.float32)
-            depth_norm = cv2.normalize(depth_vis, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-            colormap   = cv2.applyColorMap(depth_norm, cv2.COLORMAP_JET)
-            cy, cx     = depth.shape[0] // 2, depth.shape[1] // 2
-            dist_c     = int(depth[cy, cx])
-            cv2.putText(colormap, f"{dist_c}mm", (cx - 40, cy - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            cv2.circle(colormap, (cx, cy), 5, (255, 255, 255), -1)
-            _, jpeg = cv2.imencode('.jpg', colormap, [cv2.IMWRITE_JPEG_QUALITY, 70])
-            with lock:
-                latest_depth = jpeg.tobytes()
-        except Exception as e:
-            print(f"[Depth] {e}")
-            time.sleep(1)
-def depth_loop():
-    global latest_depth, latest_astra_rgb
-    if not ASTRA_AVAILABLE or astra is None:
-        return
-    while True:
-        try:
-            depth = astra.get_depth_frame()
-
+            # 듀얼 스트림 데이터 일괄 취합
+            depth, rgb = astra.get_frames()
+            
+            # 1. 깊이 이미지 필터링 및 시각화 파트 연산
             if depth is not None:
-                depth_vis  = np.clip(depth, 0, 1000).astype(np.float32)
-                depth_norm = cv2.normalize(depth_vis, None, 0, 255, cv2.NORM_MINMAX)  # type: ignore
-                depth_norm = depth_norm.astype(np.uint8)
+                depth_vis  = np.clip(depth, 200, 3000).astype(np.float32)
+                depth_norm = cv2.normalize(depth_vis, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
                 colormap   = cv2.applyColorMap(depth_norm, cv2.COLORMAP_JET)
+                cy, cx     = depth.shape[0] // 2, depth.shape[1] // 2
 
-                cy, cx = depth.shape[0] // 2, depth.shape[1] // 2
-                roi    = depth[cy-5:cy+5, cx-5:cx+5]
-                valid  = roi[roi > 0]
-                dist_c = int(np.percentile(valid, 20)) if len(valid) > 0 else -1
+                # 중앙 5x5 영역 평균
+                roi   = depth[cy-2:cy+3, cx-2:cx+3]
+                valid = roi[roi > 0]
+                dist_c = int(np.mean(valid)) if len(valid) > 0 else -1
 
+                # 바닥 영역
                 floor_roi   = depth[380:470, 250:390]
                 floor_valid = floor_roi[floor_roi > 0]
                 floor_depth = int(np.mean(floor_valid)) if len(floor_valid) > 0 else 0
+
                 obstacle_height = dist_c - floor_depth
 
                 cv2.putText(colormap, f"{dist_c}mm", (cx-40, cy-10),
@@ -244,20 +226,23 @@ def depth_loop():
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
                 cv2.circle(colormap, (cx, cy), 5, (255,255,255), -1)
                 cv2.rectangle(colormap, (250,380), (390,470), (0,255,0), 2)
-                cv2.rectangle(
-                    colormap,
-                    (cx-5, cy-5),
-                    (cx+5, cy+5),
-                    (255,255,255),
-                    2
-                )
 
                 _, jpeg_depth = cv2.imencode('.jpg', colormap, [cv2.IMWRITE_JPEG_QUALITY, 70])
                 with lock:
                     latest_depth = jpeg_depth.tobytes()
 
+            # 2. Astra 내장 RGB 컬러 데이터 처리 파트
+            if rgb is not None:
+                _, jpeg_rgb = cv2.imencode('.jpg', rgb, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                with lock:
+                    latest_astra_rgb = jpeg_rgb.tobytes()
+
+            # 데이터 미유입 시 가혹 부하 방지용 미세 마이크로 타임 딜레이
+            if depth is None and rgb is None:
+                time.sleep(0.01)
+
         except Exception as e:
-            print(f"[Depth] {e}")
+            print(f"[Depth/Astra 루프 에러] {e}")
             time.sleep(1)
 
 
@@ -266,20 +251,20 @@ def telem_loop():
     while True:
         update = {}
 
-        if IMU_AVAILABLE and imu is not None:
+        if IMU_AVAILABLE:
             try:
                 update['accel'] = imu.get_accel()
                 update['gyro']  = imu.get_gyro()
             except Exception as e:
                 print(f"[Telem/IMU] {e}")
 
-        if HX711_AVAILABLE and hx711 is not None:
+        if HX711_AVAILABLE:
             try:
                 update['weight'] = _read_weight_stable()
             except Exception as e:
                 print(f"[Telem/HX711] {e}")
 
-        if ULTRA_AVAILABLE and ultra is not None:
+        if ULTRA_AVAILABLE:
             try:
                 d = ultra.distance
                 update['distance'] = round(d * 100, 2) if d is not None else -1
@@ -324,6 +309,7 @@ def depth_feed():
     return Response(gen_stream(lambda: latest_depth),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
+# [추가] Astra 내장 카메라 영상 스트리밍을 위한 전용 라우터 엔드포인트 개방
 @app.route('/astra_rgb_feed')
 def astra_rgb_feed():
     return Response(gen_stream(lambda: latest_astra_rgb),
@@ -349,11 +335,13 @@ def status():
 
 @app.route('/tare', methods=['POST'])
 def tare():
-    if not HX711_AVAILABLE or hx711 is None:
+    if not HX711_AVAILABLE:
         return jsonify({'status': 'error', 'msg': 'hx711 not available'})
     try:
-        global _weight_buf
+        global _weight_buf, _stable_count, _last_avg
         _weight_buf.clear()
+        _stable_count = 0
+        _last_avg = 0.0
         hx711.tare(samples=20)
         return jsonify({'status': 'ok', 'msg': '영점 완료'})
     except Exception as e:
@@ -361,7 +349,7 @@ def tare():
 
 @app.route('/control', methods=['POST'])
 def control():
-    if not MOTOR_AVAILABLE or motor is None:
+    if not MOTOR_AVAILABLE:
         return jsonify({'status': 'error', 'msg': 'motor not available'})
     data  = request.get_json(force=True)
     cmd   = data.get('cmd', 'stop')
@@ -373,44 +361,24 @@ def control():
         elif cmd == 'backward':
             motor.backward(speed)
         elif cmd == 'left':
-            motor.set_motor(1, 1, speed)
+            motor.set_motor(1, -1, speed)
             motor.set_motor(2,  1, speed)
             motor.set_motor(3, -1, speed)
-            motor.set_motor(4, -1, speed)
+            motor.set_motor(4,  1, speed)
         elif cmd == 'right':
-            motor.set_motor(1, -1, speed)
+            motor.set_motor(1,  1, speed)
             motor.set_motor(2, -1, speed)
             motor.set_motor(3,  1, speed)
-            motor.set_motor(4, 1, speed)
+            motor.set_motor(4, -1, speed)
         elif cmd == 'stop':
             motor.stop()
-            if LED_AVAILABLE and led is not None:
+            if LED_AVAILABLE:
                 led.set_running()
-        if recorder.recording:
-            recorder.record(cmd, speed, heading.get() if heading else 0.0)
     except Exception as e:
         return jsonify({'status': 'error', 'msg': str(e)})
     with lock:
         latest_telem['motor'] = {'cmd': cmd, 'speed': speed}
     return jsonify({'status': 'ok', 'cmd': cmd})
-
-# @app.route('/record/start', methods=['POST'])
-# def record_start():
-#     recorder.start()
-#     return jsonify({'status': 'ok', 'msg': '기록 시작'})
-
-# @app.route('/record/stop', methods=['POST'])
-# def record_stop():
-#     recorder.stop('waypoints.json')
-#     return jsonify({'status': 'ok', 'msg': '기록 완료'})
-
-# @app.route('/run', methods=['POST'])
-# def run_waypoints():
-#     def _run():
-#         runner = WaypointRunner(motor, ultra, heading)
-#         runner.run('waypoints.json')
-#     threading.Thread(target=_run, daemon=True).start()
-#     return jsonify({'status': 'ok', 'msg': '재생 시작'})
 
 
 if __name__ == '__main__':

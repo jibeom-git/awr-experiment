@@ -14,6 +14,7 @@ if __name__ == "__main__":
     print("영점 설정 중... (로드셀에 아무것도 올리지 마세요)")
     sleep(1)
     hx.tare(samples=10)
+    hx.REF_UNIT_A = -264.5 # ← 이 줄 추가
     print("영점 완료. 이제 물체를 올려보세요. (Ctrl+C로 종료)")
 
     try:

@@ -1,0 +1,32 @@
+[
+  {
+    "cmd": "forward",
+    "speed": 50,
+    "duration": 0.503,
+    "heading": 0.0
+  },
+  {
+    "cmd": "forward",
+    "speed": 50,
+    "duration": 0.5,
+    "heading": 0.0
+  },
+  {
+    "cmd": "left",
+    "speed": 40,
+    "duration": 0.5,
+    "heading": 0.0
+  },
+  {
+    "cmd": "forward",
+    "speed": 50,
+    "duration": 0.5,
+    "heading": 0.0
+  },
+  {
+    "cmd": "stop",
+    "speed": 0,
+    "duration": 0.5,
+    "heading": 0.0
+  }
+]
