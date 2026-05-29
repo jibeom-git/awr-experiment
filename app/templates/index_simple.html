@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AWR 센서 테스트</title>
+  <style>
+    body { background: #1a1a2e; color: #eee; font-family: monospace; padding: 20px; }
+    h1 { color: #0f9; margin-bottom: 20px; }
+    .sensor-box {
+      background: #16213e; border: 1px solid #0af; border-radius: 8px;
+      padding: 15px; margin: 10px 0; font-size: 1.1rem;
+    }
+    .label { color: #888; font-size: 0.9rem; }
+    .value { color: #0f9; font-weight: bold; font-size: 1.3rem; margin-top: 5px; }
+  </style>
+</head>
+<body>
+
+<h1>🤖 AWR Robot - 센서 테스트</h1>
+
+<div class="sensor-box">
+  <div class="label">IMU (MPU-6050) - Acceleration</div>
+  <div class="value" id="accel">--</div>
+</div>
+
+<div class="sensor-box">
+  <div class="label">IMU (MPU-6050) - Gyroscope</div>
+  <div class="value" id="gyro">--</div>
+</div>
+
+<div class="sensor-box">
+  <div class="label">Ultrasonic (HC-SR04) - Distance</div>
+  <div class="value" id="distance">--</div>
+</div>
+
+<div class="sensor-box">
+  <div class="label">상태</div>
+  <div class="value" id="status">연결 중...</div>
+</div>
+
+<script>
+function updateSensors() {
+  fetch('/telemetry')
+    .then(r => r.json())
+    .then(d => {
+      const a = d.accel || {};
+      const g = d.gyro || {};
+      document.getElementById('accel').textContent =
+        `X: ${(a.x || 0).toFixed(2)}g  Y: ${(a.y || 0).toFixed(2)}g  Z: ${(a.z || 0).toFixed(2)}g`;
+      document.getElementById('gyro').textContent =
+        `X: ${(g.x || 0).toFixed(2)}°/s  Y: ${(g.y || 0).toFixed(2)}°/s  Z: ${(g.z || 0).toFixed(2)}°/s`;
+      document.getElementById('distance').textContent =
+        `${d.distance || '--'} cm`;
+      document.getElementById('status').textContent = '✓ 수신 중';
+    })
+    .catch(e => {
+      document.getElementById('status').textContent = '✗ 연결 실패: ' + e;
+    });
+}
+
+setInterval(updateSensors, 500);
+updateSensors();
+</script>
+
+</body>
+</html>
