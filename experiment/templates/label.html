@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Insite CSV 레이블링 도구</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #0f1117; color: #e2e8f0; padding: 16px; }
+  h1 { font-size: 1.1rem; color: #7dd3fc; margin-bottom: 12px; }
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
+  button { border: none; border-radius: 6px; padding: 7px 14px; cursor: pointer; font-size: 0.82rem; }
+  #btn-load   { background: #2563eb; color: #fff; }
+  #btn-save   { background: #16a34a; color: #fff; }
+  #btn-apply  { background: #d97706; color: #fff; }
+  .result-sel { display: flex; gap: 6px; flex-wrap: wrap; }
+  .r-btn { background: #2d3748; color: #e2e8f0; border: 2px solid transparent; border-radius: 6px; padding: 6px 12px; font-size: 0.78rem; cursor: pointer; }
+  .r-btn.selected { border-color: #f59e0b; background: #92400e; color: #fff; }
+  .r-btn[data-r="normal"].selected { border-color: #10b981; background: #064e3b; }
+  .chart-wrap { background: #1e2433; border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+  canvas { width: 100% !important; }
+  #info-bar { font-size: 0.8rem; color: #94a3b8; margin-bottom: 8px; }
+  #sel-info { color: #f59e0b; font-weight: bold; }
+  .status { font-size: 0.8rem; margin-left: auto; color: #64748b; }
+  .status.ok { color: #4ade80; }
+</style>
+</head>
+<body>
+<h1>📊 INSITE CSV 레이블링 도구 — 포트 5002</h1>
+
+<div class="toolbar">
+  <button id="btn-load" onclick="loadData()">↺ CSV 불러오기</button>
+  <div class="result-sel" id="result-sel">
+    <span style="font-size:0.78rem;color:#94a3b8;align-self:center;">선택 레이블:</span>
+    <button class="r-btn selected" data-r="normal"        onclick="selectR(this)">정상</button>
+    <button class="r-btn"          data-r="hill_fail"     onclick="selectR(this)">등판 실패</button>
+    <button class="r-btn"          data-r="slip"          onclick="selectR(this)">슬립</button>
+    <button class="r-btn"          data-r="impact"        onclick="selectR(this)">충격</button>
+    <button class="r-btn"          data-r="cautious_pass" onclick="selectR(this)">주의 통과</button>
+  </div>
+  <button id="btn-apply" onclick="applyRange()">✔ 구간 적용</button>
+  <button id="btn-save"  onclick="saveData()">💾 저장</button>
+  <span class="status" id="status-msg"></span>
+</div>
+
+<div id="info-bar">
+  총 <b id="total-rows">0</b>행 로드됨 &nbsp;|&nbsp;
+  선택 구간: <span id="sel-info">없음</span>
+</div>
+
+<!-- pitch 그래프 (드래그 선택) -->
+<div class="chart-wrap">
+  <div style="font-size:0.75rem;color:#64748b;margin-bottom:6px;">Pitch (°) — 드래그로 구간 선택</div>
+  <canvas id="chart-pitch" height="120"></canvas>
+</div>
+
+<!-- accel_z 그래프 -->
+<div class="chart-wrap">
+  <div style="font-size:0.75rem;color:#64748b;margin-bottom:6px;">accel_z (m/s²)</div>
+  <canvas id="chart-az" height="80"></canvas>
+</div>
+
+<!-- result 색상 바 -->
+<div class="chart-wrap">
+  <div style="font-size:0.75rem;color:#64748b;margin-bottom:6px;">Result 레이블 (색상 바)</div>
+  <canvas id="chart-result" height="40"></canvas>
+</div>
+
+<script>
+let allRows = [];
+let selectedResult = "normal";
+let selStart = null, selEnd = null;
+let isDragging = false;
+
+const RESULT_COLORS = {
+  normal:        "#10b981",
+  hill_fail:     "#ef4444",
+  slip:          "#f59e0b",
+  impact:        "#a855f7",
+  cautious_pass: "#3b82f6",
+};
+
+// ── 데이터 로드 ─────────────────────────────────────────────────────────────
+async function loadData() {
+  setStatus("로딩 중...", false);
+  const res = await fetch("/api/data");
+  const d   = await res.json();
+  allRows   = d.rows;
+  document.getElementById("total-rows").textContent = allRows.length;
+  setStatus(`${allRows.length}행 로드 완료`, true);
+  renderCharts();
+}
+
+// ── 레이블 선택 ─────────────────────────────────────────────────────────────
+function selectR(btn) {
+  document.querySelectorAll(".r-btn").forEach(b => b.classList.remove("selected"));
+  btn.classList.add("selected");
+  selectedResult = btn.dataset.r;
+}
+
+// ── 구간 적용 ───────────────────────────────────────────────────────────────
+async function applyRange() {
+  if (selStart === null || selEnd === null) {
+    alert("구간을 먼저 드래그로 선택하세요.");
+    return;
+  }
+  const s = Math.min(selStart, selEnd);
+  const e = Math.max(selStart, selEnd);
+
+  const res = await fetch("/api/label_range", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ start_idx: s, end_idx: e, result: selectedResult }),
+  });
+  const d = await res.json();
+  if (d.ok) {
+    setStatus(`${d.changed}행 변경 완료`, true);
+    // 로컬 rows 도 업데이트
+    for (let i = s; i <= e && i < allRows.length; i++) {
+      allRows[i].result = selectedResult;
+    }
+    renderCharts();
+  } else {
+    setStatus("오류: " + d.error, false);
+  }
+}
+
+// ── 저장 ────────────────────────────────────────────────────────────────────
+async function saveData() {
+  if (!allRows.length) return;
+  setStatus("저장 중...", false);
+  const res = await fetch("/api/save", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ rows: allRows }),
+  });
+  const d = await res.json();
+  setStatus(d.ok ? `${d.saved}행 저장 완료` : "저장 오류", d.ok);
+}
+
+// ── 상태 표시 ───────────────────────────────────────────────────────────────
+function setStatus(msg, ok) {
+  const el = document.getElementById("status-msg");
+  el.textContent = msg;
+  el.className = ok ? "status ok" : "status";
+}
+
+// ── 차트 렌더링 ─────────────────────────────────────────────────────────────
+let chartPitch = null, chartAz = null, chartResult = null;
+
+function renderCharts() {
+  if (!allRows.length) return;
+
+  const labels    = allRows.map((r, i) => i);
+  const pitchData = allRows.map(r => parseFloat(r.pitch)   || 0);
+  const azData    = allRows.map(r => parseFloat(r.accel_z) || 0);
+  const resultColors = allRows.map(r => RESULT_COLORS[r.result] || "#475569");
+
+  // ── pitch 차트 ────────────────────────────────────────────────────────────
+  if (chartPitch) chartPitch.destroy();
+  const ctxP = document.getElementById("chart-pitch").getContext("2d");
+  chartPitch = new Chart(ctxP, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [{
+        data: pitchData,
+        borderColor: "#3b82f6",
+        borderWidth: 1,
+        pointRadius: 0,
+        tension: 0.2,
+        fill: false,
+      }],
+    },
+    options: {
+      animation: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { display: false },
+        y: { ticks: { color: "#94a3b8", font: { size: 10 } }, grid: { color: "#2d3748" } },
+      },
+      onHover: null,
+    },
+  });
+
+  // 드래그 선택 이벤트
+  const canvasP = document.getElementById("chart-pitch");
+  canvasP.onmousedown = (e) => {
+    isDragging = true;
+    selStart = getDataIndex(e, chartPitch);
+  };
+  canvasP.onmousemove = (e) => {
+    if (!isDragging) return;
+    selEnd = getDataIndex(e, chartPitch);
+    updateSelInfo();
+  };
+  canvasP.onmouseup = () => { isDragging = false; updateSelInfo(); };
+
+  // ── accel_z 차트 ─────────────────────────────────────────────────────────
+  if (chartAz) chartAz.destroy();
+  const ctxAz = document.getElementById("chart-az").getContext("2d");
+  chartAz = new Chart(ctxAz, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [{
+        data: azData,
+        borderColor: "#a855f7",
+        borderWidth: 1,
+        pointRadius: 0,
+        tension: 0.1,
+        fill: false,
+      }],
+    },
+    options: {
+      animation: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { display: false },
+        y: { ticks: { color: "#94a3b8", font: { size: 10 } }, grid: { color: "#2d3748" } },
+      },
+    },
+  });
+
+  // ── result 색상 바 ────────────────────────────────────────────────────────
+  if (chartResult) chartResult.destroy();
+  const ctxR = document.getElementById("chart-result").getContext("2d");
+  chartResult = new Chart(ctxR, {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [{
+        data: allRows.map(() => 1),
+        backgroundColor: resultColors,
+        borderWidth: 0,
+        barPercentage: 1.0,
+        categoryPercentage: 1.0,
+      }],
+    },
+    options: {
+      animation: false,
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      scales: {
+        x: { display: false },
+        y: { display: false },
+      },
+    },
+  });
+}
+
+function getDataIndex(e, chart) {
+  const rect   = chart.canvas.getBoundingClientRect();
+  const x      = e.clientX - rect.left;
+  const area   = chart.chartArea;
+  const n      = allRows.length;
+  const ratio  = (x - area.left) / (area.right - area.left);
+  return Math.max(0, Math.min(n - 1, Math.round(ratio * (n - 1))));
+}
+
+function updateSelInfo() {
+  if (selStart === null || selEnd === null) return;
+  const s = Math.min(selStart, selEnd);
+  const e = Math.max(selStart, selEnd);
+  document.getElementById("sel-info").textContent = `인덱스 ${s} ~ ${e} (${e - s + 1}행)`;
+}
+
+// 초기 로드
+loadData();
+</script>
+</body>
+</html>

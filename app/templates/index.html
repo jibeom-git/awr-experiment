@@ -3,397 +3,294 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>INSITE · Robot Dashboard</title>
+<title>INSITE · AGV AI CONTROL</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
 <style>
-/* ═══════════════════════════════════════════════════
-   DESIGN SYSTEM — Industrial Terminal Aesthetic
-   Monochromatic dark + single cyan accent
-   Font: JetBrains Mono (code feel) + Barlow Condensed (labels)
-════════════════════════════════════════════════════ */
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Barlow+Condensed:wght@300;400;500;600;700&display=swap');
 
 :root {
-  --bg0:      #080a0d;
-  --bg1:      #0c0f14;
-  --bg2:      #111520;
-  --bg3:      #161c28;
-  --bg4:      #1c2333;
-  --border:   #1f2940;
-  --border2:  #283450;
-  --cyan:     #00d4ff;
-  --cyan-dim: rgba(0,212,255,0.12);
-  --cyan-glow:rgba(0,212,255,0.35);
-  --green:    #00e676;
-  --yellow:   #ffcc02;
-  --red:      #ff3d3d;
-  --red-dim:  rgba(255,61,61,0.15);
-  --text0:    #e8eef8;
-  --text1:    #8a9ab8;
-  --text2:    #3d4f6e;
-  --mono:     'JetBrains Mono', monospace;
-  --label:    'Barlow Condensed', sans-serif;
-  --header-h: 44px;
+  --bg0:       #080a0d;
+  --bg1:       #0c0f14;
+  --bg2:       #111520;
+  --bg3:       #161c28;
+  --bg4:       #1c2333;
+  --border:    #1f2940;
+  --border2:   #283450;
+  --cyan:      #00d4ff;
+  --cyan-dim:  rgba(0,212,255,0.12);
+  --cyan-glow: rgba(0,212,255,0.35);
+  --green:     #00e676;
+  --yellow:    #ffcc02;
+  --orange:    #ff9100;
+  --red:       #ff3d3d;
+  --red-dim:   rgba(255,61,61,0.15);
+  --text0:     #e8eef8;
+  --text1:     #8a9ab8;
+  --text2:     #3d4f6e;
+  --mono:      'JetBrains Mono', monospace;
+  --label:     'Barlow Condensed', sans-serif;
+  --hdr-h:     44px;
 }
 
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-
-html,body{
-  height:100%;
-  background:var(--bg0);
-  color:var(--text0);
-  font-family:var(--mono);
-  font-size:13px;
-  overflow:hidden;
-  -webkit-font-smoothing:antialiased;
+*,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
+html,body {
+  height:100%; background:var(--bg0); color:var(--text0);
+  font-family:var(--mono); font-size:13px;
+  overflow:hidden; -webkit-font-smoothing:antialiased;
+}
+body::after {
+  content:''; position:fixed; inset:0; pointer-events:none; z-index:9999;
+  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.05) 2px,rgba(0,0,0,.05) 4px);
 }
 
-/* ── SCANLINE OVERLAY ─────────────────────────────── */
-body::after{
-  content:'';
-  position:fixed;inset:0;
-  background:repeating-linear-gradient(
-    0deg,
-    transparent,transparent 2px,
-    rgba(0,0,0,0.05) 2px,rgba(0,0,0,0.05) 4px
-  );
-  pointer-events:none;
-  z-index:9999;
+/* ── HEADER ── */
+header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:0 18px; height:var(--hdr-h);
+  background:var(--bg1); border-bottom:1px solid var(--border);
+  flex-shrink:0; position:relative;
 }
-
-/* ══════════════════════════════════════════════════
-   HEADER
-══════════════════════════════════════════════════ */
-header{
-  display:flex;align-items:center;justify-content:space-between;
-  padding:0 18px;
-  height:var(--header-h);
-  background:var(--bg1);
-  border-bottom:1px solid var(--border);
-  flex-shrink:0;
-  position:relative;
-}
-/* 상단 cyan 강조선 */
-header::before{
-  content:'';position:absolute;top:0;left:0;right:0;height:2px;
+header::before {
+  content:''; position:absolute; top:0; left:0; right:0; height:2px;
   background:linear-gradient(90deg,transparent,var(--cyan),transparent);
 }
-.logo{
-  font-family:var(--label);font-size:18px;font-weight:700;
-  letter-spacing:.18em;color:var(--cyan);
-  text-shadow:0 0 18px var(--cyan-glow);
-}
-.logo em{
-  font-style:normal;font-weight:300;
-  font-size:11px;color:var(--text1);
-  letter-spacing:.08em;margin-left:10px;
-}
-.hdr-right{display:flex;align-items:center;gap:12px;}
+.logo { font-family:var(--label); font-size:18px; font-weight:700;
+        letter-spacing:.18em; color:var(--cyan); text-shadow:0 0 18px var(--cyan-glow); }
+.logo em { font-style:normal; font-weight:300; font-size:11px;
+           color:var(--text1); letter-spacing:.08em; margin-left:10px; }
+.hdr-right { display:flex; align-items:center; gap:12px; }
+.conn { display:flex; align-items:center; gap:6px; font-size:10px;
+        color:var(--text2); letter-spacing:.1em; font-family:var(--label); }
+.conn-dot { width:7px; height:7px; border-radius:50%;
+            background:var(--red); box-shadow:0 0 5px var(--red); transition:all .3s; }
+.conn-dot.live { background:var(--green); box-shadow:0 0 8px var(--green); }
+.hdr-clock { font-size:11px; color:var(--text2); letter-spacing:.06em; min-width:60px; text-align:right; }
 
-/* 연결 상태 */
-.conn{
-  display:flex;align-items:center;gap:6px;
-  font-size:10px;color:var(--text2);letter-spacing:.1em;
-  font-family:var(--label);
+/* ── LAYOUT ── */
+.layout {
+  display:grid; grid-template-columns:1fr 320px;
+  height:calc(100vh - var(--hdr-h)); overflow:hidden;
 }
-.conn-dot{
-  width:7px;height:7px;border-radius:50%;
-  background:var(--red);box-shadow:0 0 5px var(--red);
-  transition:all .3s;
-}
-.conn-dot.live{background:var(--green);box-shadow:0 0 8px var(--green);}
-
-/* 방향키 표시 */
-.dpad{display:grid;grid-template-columns:repeat(3,18px);grid-template-rows:repeat(2,18px);gap:2px;}
-.dpad-btn{
-  display:flex;align-items:center;justify-content:center;
-  background:var(--bg3);border:1px solid var(--border);
-  font-size:8px;color:var(--text2);border-radius:2px;
-  transition:all .1s;
-  grid-column:var(--gc);grid-row:var(--gr);
-}
-.dpad-btn.lit{background:var(--cyan-dim);border-color:var(--cyan);color:var(--cyan);box-shadow:inset 0 0 6px var(--cyan-dim);}
-#dk-up   {--gc:2;--gr:1}
-#dk-left {--gc:1;--gr:2}
-#dk-down {--gc:2;--gr:2}
-#dk-right{--gc:3;--gr:2}
-
-.hdr-clock{font-size:11px;color:var(--text2);letter-spacing:.06em;min-width:60px;text-align:right;}
-
-/* ══════════════════════════════════════════════════
-   MAIN LAYOUT  — 2 columns (left fluid / right 330px)
-══════════════════════════════════════════════════ */
-.layout{
-  display:grid;
-  grid-template-columns:1fr 330px;
-  height:calc(100vh - var(--header-h));
-  overflow:hidden;
+.left {
+  display:grid; grid-template-rows:1fr auto;
+  border-right:1px solid var(--border); overflow:hidden;
 }
 
-/* ════════════
-   LEFT COLUMN
-════════════ */
-.left{
-  display:grid;
-  grid-template-rows:1fr auto;
-  border-right:1px solid var(--border);
-  overflow:hidden;
+/* ── CAMERA ── */
+.cam-wrap {
+  position:relative; background:#020408; overflow:hidden;
+  border-bottom:1px solid var(--border);
+}
+.cam-wrap img { width:100%; height:100%; object-fit:contain; display:block; }
+.cam-overlay {
+  position:absolute; inset:0; pointer-events:none;
+  background:linear-gradient(to bottom,rgba(8,10,13,.5) 0%,transparent 15%,transparent 85%,rgba(8,10,13,.5) 100%);
+}
+.cam-corner { position:absolute; width:14px; height:14px; border-color:var(--yellow); border-style:solid; opacity:.6; }
+.cam-corner.tl { top:10px; left:10px; border-width:1px 0 0 1px; }
+.cam-corner.tr { top:10px; right:10px; border-width:1px 1px 0 0; }
+.cam-corner.bl { bottom:10px; left:10px; border-width:0 0 1px 1px; }
+.cam-corner.br { bottom:10px; right:10px; border-width:0 1px 1px 0; }
+.cam-tag {
+  position:absolute; top:10px; left:24px;
+  font-size:9px; letter-spacing:.14em; color:var(--yellow);
+  font-family:var(--label); opacity:.7;
 }
 
-/* CAMERA */
-.cam-wrap{
-  position:relative;background:#020408;overflow:hidden;
+/* ── CONTROL STRIP (bottom of left) ── */
+.ctrl-strip {
+  background:var(--bg1); padding:10px 14px;
+  display:flex; flex-direction:column; gap:8px;
 }
-#cam-img{width:100%;height:100%;object-fit:contain;display:block;}
-.cam-overlay{
-  position:absolute;inset:0;pointer-events:none;
-  background:
-    linear-gradient(to bottom,rgba(8,10,13,.7) 0%,transparent 12%,transparent 88%,rgba(8,10,13,.7) 100%),
-    linear-gradient(to right, rgba(8,10,13,.3) 0%,transparent 8%,transparent 92%,rgba(8,10,13,.3) 100%);
-}
-/* 코너 브라켓 */
-.cam-corner{position:absolute;width:14px;height:14px;border-color:var(--cyan);border-style:solid;opacity:.6;}
-.cam-corner.tl{top:10px;left:10px;border-width:1px 0 0 1px;}
-.cam-corner.tr{top:10px;right:10px;border-width:1px 1px 0 0;}
-.cam-corner.bl{bottom:10px;left:10px;border-width:0 0 1px 1px;}
-.cam-corner.br{bottom:10px;right:10px;border-width:0 1px 1px 0;}
-.cam-tag{
-  position:absolute;top:10px;left:24px;
-  font-size:9px;letter-spacing:.14em;color:var(--cyan);
-  font-family:var(--label);opacity:.7;
-}
-.cam-offline{
-  position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
-  gap:10px;color:var(--text2);font-size:10px;letter-spacing:.12em;
-}
-.cam-offline svg{opacity:.2;}
+.ctrl-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 
-/* CONTROL STRIP */
-.ctrl-strip{
-  background:var(--bg1);
-  border-top:1px solid var(--border);
-  padding:12px 16px;
-  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+/* ── BUTTON SYSTEM ── */
+.btn {
+  font-family:var(--label); font-size:11px; font-weight:600;
+  letter-spacing:.08em; padding:6px 12px; border-radius:2px; cursor:pointer;
+  border:1px solid var(--border2); background:var(--bg3); color:var(--text0);
+  transition:all .15s; white-space:nowrap; flex-shrink:0;
 }
+.btn:hover  { background:var(--bg4); border-color:var(--cyan); color:var(--cyan); }
+.btn:active { transform:scale(.97); }
+.btn-cyan   { background:rgba(0,212,255,.1); border-color:var(--cyan); color:var(--cyan); }
+.btn-cyan:hover { background:rgba(0,212,255,.2); }
+.btn-green  { background:rgba(0,230,118,.08); border-color:var(--green); color:var(--green); }
+.btn-green:hover { background:rgba(0,230,118,.18); }
+.btn-red    { border-color:rgba(255,61,61,.4); color:var(--red); }
+.btn-red:hover { background:var(--red-dim); }
+.btn-yellow { border-color:rgba(255,204,2,.4); color:var(--yellow); }
+.btn-yellow:hover { background:rgba(255,204,2,.1); }
+.btn-orange { border-color:rgba(255,145,0,.4); color:var(--orange); }
+.btn-orange:hover { background:rgba(255,145,0,.1); }
+.btn-active { background:rgba(0,230,118,.15) !important; border-color:var(--green) !important; color:var(--green) !important; }
+.btn-mode-active { box-shadow:0 0 8px var(--cyan-glow); }
 
-/* 로봇 상태 뱃지 */
-.state-badge{
-  display:flex;align-items:center;gap:6px;
-  padding:5px 10px;
-  background:var(--bg3);border:1px solid var(--border);border-radius:2px;
-  font-size:10px;letter-spacing:.1em;font-family:var(--label);font-weight:600;
+/* drive mode label */
+.ctrl-label { font-family:var(--label); font-size:9px; color:var(--text2);
+              letter-spacing:.15em; text-transform:uppercase; white-space:nowrap; }
+
+/* ── RIGHT PANEL ── */
+.right {
+  display:flex; flex-direction:column;
+  background:var(--bg1); overflow-y:auto; overflow-x:hidden;
+}
+.right::-webkit-scrollbar { width:3px; }
+.right::-webkit-scrollbar-thumb { background:var(--border2); }
+
+.sec-hdr {
+  font-family:var(--label); font-size:9px; font-weight:600;
+  letter-spacing:.2em; color:var(--text2); text-transform:uppercase;
+  padding:8px 14px 6px; border-bottom:1px solid var(--border);
   flex-shrink:0;
 }
-.state-dot{width:6px;height:6px;border-radius:50%;background:var(--text2);transition:all .3s;}
-.state-badge.moving  .state-dot{background:var(--yellow);box-shadow:0 0 6px var(--yellow);animation:blink .45s infinite;}
-.state-badge.idle    .state-dot{background:var(--green); box-shadow:0 0 6px var(--green);}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
 
-/* 배터리 필 */
-.bat-pill{
-  display:flex;align-items:center;gap:7px;
-  background:var(--bg3);border:1px solid var(--border);
-  padding:5px 10px;border-radius:2px;min-width:150px;
+/* ── SENSOR GRID ── */
+.sensor-grid {
+  display:grid; grid-template-columns:1fr 1fr;
+  border-bottom:1px solid var(--border);
 }
-.bat-pill .blabel{font-size:9px;color:var(--text2);letter-spacing:.1em;font-family:var(--label);white-space:nowrap;}
-.bat-track{flex:1;height:5px;background:var(--bg0);border:1px solid var(--border2);border-radius:1px;overflow:hidden;}
-.bat-fill{height:100%;background:var(--green);transition:width .6s ease,background .3s;border-radius:1px;}
-.bat-pct{font-size:10px;color:var(--text0);min-width:38px;text-align:right;letter-spacing:.04em;}
+.s-card { padding:10px 12px; }
+.s-card + .s-card { border-left:1px solid var(--border); }
+.s-card:nth-child(3), .s-card:nth-child(4) { border-top:1px solid var(--border); }
+.card-lbl { font-family:var(--label); font-size:8px; color:var(--text2);
+            letter-spacing:.15em; text-transform:uppercase; margin-bottom:5px; }
+.big-num { font-family:var(--label); font-size:26px; font-weight:700;
+           color:var(--text0); line-height:1; }
+.big-unit { font-size:11px; color:var(--text1); font-weight:400; margin-left:2px; }
 
-/* 속도 슬라이더 */
-.spd-wrap{
-  display:flex;align-items:center;gap:7px;
-  background:var(--bg3);border:1px solid var(--border);padding:5px 10px;border-radius:2px;
+/* ── FSM STATE PANEL ── */
+.fsm-panel { border-bottom:1px solid var(--border); padding:10px 14px; flex-shrink:0; }
+.fsm-state-badge {
+  font-family:var(--label); font-size:22px; font-weight:700;
+  letter-spacing:.06em; color:var(--cyan);
+  padding:6px 0 4px; border-radius:2px; text-align:center;
+  transition:color .3s;
 }
-.spd-wrap label{font-size:9px;color:var(--text2);letter-spacing:.1em;font-family:var(--label);white-space:nowrap;}
-input[type=range]{
-  -webkit-appearance:none;width:70px;height:3px;
-  background:var(--border2);outline:none;border-radius:2px;cursor:pointer;
+.fsm-route-row {
+  display:flex; justify-content:space-between; align-items:center; margin-top:6px;
 }
-input[type=range]::-webkit-slider-thumb{
-  -webkit-appearance:none;width:11px;height:11px;border-radius:50%;
-  background:var(--cyan);cursor:pointer;box-shadow:0 0 5px var(--cyan-glow);
-}
-.spd-val{font-size:10px;color:var(--cyan);min-width:26px;text-align:right;}
+.fsm-key  { font-size:9px; color:var(--text2); letter-spacing:.08em; font-family:var(--label); }
+.fsm-val  { font-size:11px; color:var(--text0); letter-spacing:.04em; }
+.fsm-val.route-a { color:var(--cyan); }
+.fsm-val.route-b { color:var(--yellow); }
+.fsm-val.route-c { color:var(--green); }
+.fsm-val.route-dead { color:var(--red); animation:blink .5s infinite; }
+.fsm-val.ok   { color:var(--green); }
+.fsm-val.warn { color:var(--yellow); }
+.fsm-val.crit { color:var(--red); }
 
-/* 버튼 */
-.btn{
-  font-family:var(--label);font-size:11px;font-weight:600;
-  letter-spacing:.08em;padding:6px 13px;border-radius:2px;cursor:pointer;
-  border:1px solid var(--border2);background:var(--bg3);color:var(--text0);
-  transition:all .15s;white-space:nowrap;flex-shrink:0;
-}
-.btn:hover{background:var(--bg4);border-color:var(--cyan);color:var(--cyan);}
-.btn:active{transform:scale(.97);}
-.btn-cyan{background:rgba(0,212,255,.1);border-color:var(--cyan);color:var(--cyan);}
-.btn-cyan:hover{background:rgba(0,212,255,.2);}
-.btn-red{border-color:rgba(255,61,61,.4);color:var(--red);}
-.btn-red:hover{background:var(--red-dim);}
-
-/* 경로 입력 */
-.path-form{
-  display:flex;align-items:center;gap:8px;
-  margin-left:auto;flex-wrap:wrap;
-}
-.txt-input{
-  font-family:var(--mono);font-size:11px;
-  background:var(--bg0);border:1px solid var(--border2);
-  color:var(--text0);padding:5px 9px;border-radius:2px;
-  outline:none;letter-spacing:.04em;
-}
-.txt-input::placeholder{color:var(--text2);}
-.txt-input:focus{border-color:var(--cyan);}
-#inp-path-name{width:110px;}
-#inp-path-nodes{width:130px;}
-
-/* ═════════════
-   RIGHT COLUMN
-═════════════ */
-.right{
-  display:flex;flex-direction:column;
-  background:var(--bg1);overflow:hidden;
-}
-
-/* 섹션 헤더 */
-.sec-hdr{
-  font-family:var(--label);font-size:9px;font-weight:600;
-  letter-spacing:.2em;color:var(--text2);text-transform:uppercase;
-  padding:8px 14px 6px;border-bottom:1px solid var(--border);
+/* ── DRIVE MODE PANEL ── */
+.mode-panel {
+  border-bottom:1px solid var(--border); padding:10px 14px;
   flex-shrink:0;
-  display:flex;align-items:center;justify-content:space-between;
 }
-.sec-hdr .sec-action{
-  font-size:9px;color:var(--text2);cursor:pointer;letter-spacing:.06em;
-  padding:1px 6px;border:1px solid var(--border);border-radius:1px;
+.mode-row { display:flex; gap:8px; margin-bottom:8px; }
+.mode-btn {
+  flex:1; padding:8px; font-family:var(--label); font-size:13px; font-weight:700;
+  letter-spacing:.1em; border-radius:2px; cursor:pointer;
+  border:1px solid var(--border2); background:var(--bg3); color:var(--text1);
+  transition:all .2s;
+}
+.mode-btn:hover { border-color:var(--cyan); color:var(--cyan); }
+.mode-btn.selected-fast { background:rgba(0,212,255,.1); border-color:var(--cyan); color:var(--cyan); box-shadow:0 0 8px var(--cyan-glow); }
+.mode-btn.selected-safe { background:rgba(0,230,118,.1); border-color:var(--green); color:var(--green); box-shadow:0 0 8px rgba(0,230,118,.3); }
+.drive-row { display:flex; gap:8px; }
+.drive-btn {
+  flex:1; padding:8px; font-family:var(--label); font-size:13px; font-weight:700;
+  letter-spacing:.1em; border-radius:2px; cursor:pointer;
+  border:1px solid var(--border2); background:var(--bg3); color:var(--text1);
+  transition:all .2s;
+}
+.drive-btn.start { border-color:rgba(0,230,118,.5); color:var(--green); }
+.drive-btn.start:hover { background:rgba(0,230,118,.1); }
+.drive-btn.start.running { background:rgba(0,230,118,.15); animation:pulse-green 1.2s infinite; }
+.drive-btn.stop  { border-color:rgba(255,61,61,.4); color:var(--red); }
+.drive-btn.stop:hover { background:var(--red-dim); }
+@keyframes pulse-green { 0%,100%{box-shadow:0 0 4px rgba(0,230,118,.3)} 50%{box-shadow:0 0 14px rgba(0,230,118,.7)} }
+
+/* ── OBSTACLE INJECTION PANEL ── */
+.obs-panel { border-bottom:1px solid var(--border); padding:10px 14px; flex-shrink:0; }
+.obs-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:6px; }
+.obs-btn {
+  padding:7px 6px; font-family:var(--label); font-size:10px; font-weight:600;
+  letter-spacing:.06em; border-radius:2px; cursor:pointer;
+  border:1px solid var(--border2); background:var(--bg3); color:var(--text1);
+  transition:all .15s; text-align:center;
+}
+.obs-btn:hover { border-color:var(--orange); color:var(--orange); background:rgba(255,145,0,.08); }
+.obs-btn.active { border-color:var(--orange); color:var(--orange); background:rgba(255,145,0,.15); box-shadow:0 0 6px rgba(255,145,0,.3); }
+.obs-btn.reset:hover { border-color:var(--text1); color:var(--text0); }
+.node-btn {
+  width:100%; padding:8px; font-family:var(--label); font-size:11px; font-weight:700;
+  letter-spacing:.1em; border-radius:2px; cursor:pointer;
+  border:1px solid rgba(0,212,255,.4); background:var(--bg3); color:var(--cyan);
   transition:all .15s;
 }
-.sec-hdr .sec-action:hover{color:var(--cyan);border-color:var(--cyan);}
+.node-btn:hover { background:var(--cyan-dim); box-shadow:0 0 8px var(--cyan-glow); }
+.node-btn:active { transform:scale(.97); }
 
-/* ── IMU 패널 ── */
-.imu-panel{border-bottom:1px solid var(--border);flex-shrink:0;}
-.imu-grid{display:grid;grid-template-columns:1fr 1fr 1fr;padding:10px 10px 12px;gap:6px;}
-.imu-cell{
-  background:var(--bg2);border:1px solid var(--border);border-radius:2px;
-  padding:8px 6px;text-align:center;
-}
-.imu-axis{font-family:var(--label);font-size:8px;color:var(--text2);letter-spacing:.15em;margin-bottom:5px;}
-.imu-val{
-  font-size:20px;font-weight:700;font-family:var(--label);
-  color:var(--cyan);line-height:1;letter-spacing:-.01em;
-}
-.imu-unit{font-size:9px;color:var(--text1);font-weight:400;margin-left:1px;}
-
-/* ── 거리 + 로드셀 ── */
-.sensors-row{
-  display:grid;grid-template-columns:1fr 1fr;
-  border-bottom:1px solid var(--border);flex-shrink:0;
-}
-.sensor-card{padding:10px 14px;}
-.sensor-card+.sensor-card{border-left:1px solid var(--border);}
-.card-label{font-family:var(--label);font-size:8px;color:var(--text2);letter-spacing:.15em;text-transform:uppercase;margin-bottom:6px;}
-.big-num{
-  font-family:var(--label);font-size:28px;font-weight:700;
-  color:var(--text0);line-height:1;
-}
-.big-unit{font-size:12px;color:var(--text1);font-weight:400;margin-left:2px;}
-.sub-txt{font-size:9px;color:var(--text2);margin-top:4px;letter-spacing:.06em;}
-
-/* ── 로봇 상태 요약 ── */
-.summary-panel{
-  border-bottom:1px solid var(--border);flex-shrink:0;
-  padding:8px 14px;display:flex;gap:0;flex-direction:column;gap:4px;
-}
-.sum-row{display:flex;justify-content:space-between;align-items:center;}
-.sum-key{font-size:9px;color:var(--text2);letter-spacing:.08em;font-family:var(--label);}
-.sum-val{font-size:10px;color:var(--text0);letter-spacing:.04em;}
-.sum-val.ok {color:var(--green);}
-.sum-val.warn{color:var(--yellow);}
-.sum-val.crit{color:var(--red);}
-
-/* ── 웨이포인트 리스트 ── */
-.wp-section{
-  flex:1;display:flex;flex-direction:column;
-  overflow:hidden;border-bottom:1px solid var(--border);
-  min-height:0;
-}
-.wp-list{
-  flex:1;overflow-y:auto;padding:6px 8px;
-  display:flex;flex-direction:column;gap:3px;
-}
-.wp-list::-webkit-scrollbar{width:3px;}
-.wp-list::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px;}
-
-.wp-item{
-  display:grid;grid-template-columns:26px 1fr auto;align-items:center;gap:8px;
-  padding:6px 9px;background:var(--bg2);border:1px solid var(--border);
-  border-radius:2px;cursor:default;
-  animation:fadeUp .25s ease;
-  transition:border-color .2s;
-}
-.wp-item:hover{border-color:var(--border2);}
-@keyframes fadeUp{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
-.wp-num{
-  font-family:var(--label);font-size:12px;font-weight:700;
-  color:var(--cyan);text-align:center;
-}
-.wp-body{}
-.wp-title{font-size:10px;color:var(--text0);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.wp-meta{font-size:9px;color:var(--text2);margin-top:2px;letter-spacing:.04em;}
-.wp-tags{display:flex;flex-direction:column;align-items:flex-end;gap:2px;}
-.tag-hdg{font-size:9px;color:var(--yellow);}
-.tag-dist{font-size:9px;color:var(--green);}
-.wp-del{
-  font-size:8px;color:var(--text2);cursor:pointer;padding:2px 4px;
-  border:1px solid transparent;border-radius:1px;transition:all .15s;
+/* ── DEADLOCK PANEL ── */
+.deadlock-panel {
   display:none;
+  border-bottom:1px solid var(--border); padding:10px 14px;
+  flex-shrink:0; background:rgba(255,61,61,.07);
+  border-left:3px solid var(--red);
 }
-.wp-item:hover .wp-del{display:block;}
-.wp-del:hover{color:var(--red);border-color:var(--red);}
-.list-empty{color:var(--text2);font-size:10px;letter-spacing:.1em;text-align:center;padding:18px;font-family:var(--label);}
+.deadlock-panel.active { display:block; }
+.deadlock-title {
+  font-family:var(--label); font-size:11px; font-weight:700;
+  color:var(--red); letter-spacing:.12em; margin-bottom:6px;
+  animation:blink .6s infinite;
+}
+.deadlock-msg { font-size:9px; color:var(--text1); margin-bottom:8px; letter-spacing:.04em; }
+.chat-row { display:flex; gap:6px; }
+.chat-input {
+  flex:1; font-family:var(--mono); font-size:11px;
+  background:var(--bg0); border:1px solid var(--border2);
+  color:var(--text0); padding:6px 9px; border-radius:2px; outline:none;
+}
+.chat-input::placeholder { color:var(--text2); }
+.chat-input:focus { border-color:var(--red); }
+.chat-send {
+  padding:6px 12px; font-family:var(--label); font-size:11px; font-weight:700;
+  border-radius:2px; cursor:pointer; border:1px solid var(--red);
+  background:var(--red-dim); color:var(--red); letter-spacing:.06em; transition:all .15s;
+}
+.chat-send:hover { background:rgba(255,61,61,.3); }
 
-/* ── 경로 리스트 ── */
-.path-section{flex-shrink:0;max-height:160px;display:flex;flex-direction:column;}
-.path-list{flex:1;overflow-y:auto;padding:6px 8px;display:flex;flex-direction:column;gap:3px;}
-.path-list::-webkit-scrollbar{width:3px;}
-.path-list::-webkit-scrollbar-thumb{background:var(--border2);}
-.path-item{
-  display:flex;align-items:center;gap:8px;
-  padding:6px 9px;background:var(--bg2);border:1px solid var(--border);border-radius:2px;
+/* ── MOCK STATUS ROW ── */
+.mock-status-row {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:4px 14px 6px; border-bottom:1px solid var(--border); flex-shrink:0;
 }
-.path-name-tag{font-size:10px;color:var(--text0);font-family:var(--label);font-weight:600;min-width:72px;}
-.path-nodes-tag{font-size:9px;color:var(--cyan);letter-spacing:.04em;}
+.mock-lbl { font-family:var(--label); font-size:8px; color:var(--text2); letter-spacing:.12em; }
+.mock-val { font-size:9px; color:var(--text1); letter-spacing:.04em; }
+.mock-val.injected { color:var(--orange); }
 
-/* ══════════════════════════════════════════════════
-   TOAST NOTIFICATION
-══════════════════════════════════════════════════ */
-#toast{
-  position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
-  padding:8px 20px;border-radius:2px;font-size:11px;letter-spacing:.06em;
-  border:1px solid var(--border2);background:var(--bg3);color:var(--text0);
-  z-index:10000;pointer-events:none;
-  opacity:0;transition:opacity .2s;
-  font-family:var(--label);font-weight:600;
-  white-space:nowrap;
+/* ── TOAST ── */
+#toast {
+  position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
+  padding:8px 20px; border-radius:2px; font-size:11px; letter-spacing:.06em;
+  border:1px solid var(--border2); background:var(--bg3); color:var(--text0);
+  z-index:10000; pointer-events:none; opacity:0; transition:opacity .2s;
+  font-family:var(--label); font-weight:600; white-space:nowrap;
 }
-#toast.show{opacity:1;}
-#toast.ok  {border-color:var(--green);color:var(--green);}
-#toast.err {border-color:var(--red);  color:var(--red);}
-#toast.info{border-color:var(--cyan); color:var(--cyan);}
+#toast.show { opacity:1; }
+#toast.ok   { border-color:var(--green);  color:var(--green); }
+#toast.err  { border-color:var(--red);    color:var(--red); }
+#toast.info { border-color:var(--cyan);   color:var(--cyan); }
+#toast.warn { border-color:var(--orange); color:var(--orange); }
+
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
 </style>
 </head>
 <body>
 
-<!-- ══════════ HEADER ══════════ -->
+<!-- ═══════════════════════════════════ HEADER ════════════════════════════════ -->
 <header>
-  <div class="logo">INSITE<em>waypoint recorder</em></div>
+  <div class="logo">INSITE<em>AGV AI CONTROL</em></div>
   <div class="hdr-right">
-    <!-- 방향키 상태 표시 -->
-    <div class="dpad">
-      <div class="dpad-btn" id="dk-up">▲</div>
-      <div class="dpad-btn" id="dk-left">◄</div>
-      <div class="dpad-btn" id="dk-down">▼</div>
-      <div class="dpad-btn" id="dk-right">►</div>
-    </div>
     <div class="conn">
       <div class="conn-dot" id="conn-dot"></div>
       <span id="conn-label">OFFLINE</span>
@@ -402,201 +299,161 @@ input[type=range]::-webkit-slider-thumb{
   </div>
 </header>
 
-<!-- ══════════ MAIN LAYOUT ══════════ -->
 <div class="layout">
 
-  <!-- ════ LEFT COLUMN ════ -->
+  <!-- ═══════════════════════ LEFT: 카메라 + 컨트롤 스트립 ════════════════════ -->
   <div class="left">
 
-    <!-- 카메라 피드 -->
+    <!-- AI 전방 카메라 피드 -->
     <div class="cam-wrap">
-      <img id="cam-img"
-           src="http://192.168.0.50:5001/video_feed"
-           alt=""
-           onerror="this.style.display='none';document.getElementById('cam-offline').style.display='flex'">
+      <img id="ai-cam" src="/ai_video_feed" alt="">
       <div class="cam-overlay"></div>
-      <div class="cam-corner tl"></div>
-      <div class="cam-corner tr"></div>
-      <div class="cam-corner bl"></div>
-      <div class="cam-corner br"></div>
-      <div class="cam-tag">RGB CAM · OV5647 · CSI · :5001/video_feed</div>
-      <div class="cam-offline" id="cam-offline" style="display:none;">
-        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
-          <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/>
-          <line x1="1" y1="1" x2="23" y2="23" stroke-width="1.5"/>
-        </svg>
-        <span>CAMERA OFFLINE</span>
-        <span style="font-size:9px;opacity:.5">192.168.0.50:5001/video_feed</span>
-      </div>
+      <div class="cam-corner tl"></div><div class="cam-corner tr"></div>
+      <div class="cam-corner bl"></div><div class="cam-corner br"></div>
+      <div class="cam-tag">AI PERCEPTION CAM · ORBBEC ASTRA RGB · /ai_video_feed</div>
     </div>
 
-    <!-- 컨트롤 스트립 -->
+    <!-- 하단 컨트롤 스트립 -->
     <div class="ctrl-strip">
 
-      <!-- 상태 뱃지 -->
-      <div class="state-badge idle" id="state-badge">
-        <div class="state-dot" id="state-dot"></div>
-        <span id="state-txt">IDLE</span>
+      <!-- 장애물 주입 버튼 (4개) -->
+      <div class="ctrl-row">
+        <span class="ctrl-label">OBSTACLE INJ</span>
+        <button class="btn btn-yellow" onclick="injectObs('bump_3cm')" id="obs-3cm">3cm 방지턱 조우</button>
+        <button class="btn btn-red"    onclick="injectObs('bump_5cm')" id="obs-5cm">5cm 방지턱 조우</button>
+        <button class="btn btn-orange" onclick="injectObs('vinyl')"    id="obs-vinyl">비닐 노면 진입</button>
+        <button class="btn"            onclick="injectObs('reset')"    id="obs-reset">장애물 리셋</button>
       </div>
 
-      <!-- HAT 배터리 -->
-      <div class="bat-pill">
-        <span class="blabel">HAT</span>
-        <div class="bat-track"><div class="bat-fill" id="hat-fill" style="width:0%"></div></div>
-        <span class="bat-pct" id="hat-pct">--%</span>
+      <!-- 노드 감지 자극 버튼 -->
+      <div class="ctrl-row">
+        <span class="ctrl-label">NODE</span>
+        <button class="btn btn-cyan" onclick="triggerNode()">노드 감지 자극</button>
+        <span class="ctrl-label" style="margin-left:8px;">LOADCELL</span>
+        <button class="btn" onclick="tareLc()">TARE</button>
       </div>
 
-      <!-- Pi UPS 배터리 -->
-      <div class="bat-pill">
-        <span class="blabel">Pi UPS</span>
-        <div class="bat-track"><div class="bat-fill" id="ups-fill" style="width:0%"></div></div>
-        <span class="bat-pct" id="ups-pct">--%</span>
-      </div>
-
-      <!-- 속도 슬라이더 -->
-      <div class="spd-wrap">
-        <label>SPEED</label>
-        <input type="range" id="spd" min="10" max="100" value="40"
-               oninput="onSpeed(this.value)">
-        <span class="spd-val" id="spd-val">40</span>
-      </div>
-
-      <!-- 웨이포인트 저장 버튼 -->
-      <button class="btn btn-cyan" onclick="saveWaypoint()">+ 웨이포인트 저장</button>
-
-      <!-- 경로 저장 폼 -->
-      <div class="path-form">
-        <input class="txt-input" id="inp-path-name"
-               placeholder="경로명 (예: Path_A)"
-               maxlength="30">
-        <input class="txt-input" id="inp-path-nodes"
-               placeholder="노드 (예: 1-2-3-5)"
-               maxlength="60"
-               oninput="fmtNodeInput(this)"
-               onkeypress="return /[0-9\-]/.test(event.key)">
-        <button class="btn" onclick="savePath()">경로 저장 종료</button>
-        <button class="btn btn-red" onclick="cancelSession()">실행 취소</button>
+      <!-- 키보드 수동 조작 안내 -->
+      <div class="ctrl-row">
+        <span class="ctrl-label">KEYBOARD</span>
+        <span style="font-size:9px;color:var(--text2);letter-spacing:.06em">
+          W/↑ 전진 &nbsp;·&nbsp; S/↓ 후진 &nbsp;·&nbsp; A/← 좌회전 &nbsp;·&nbsp; D/→ 우회전 &nbsp;·&nbsp; Space 정지
+        </span>
       </div>
 
     </div>
-  </div><!-- /left -->
+  </div>
 
-  <!-- ════ RIGHT COLUMN ════ -->
+  <!-- ═══════════════════════ RIGHT: 센서 / 제어 패널 ════════════════════════ -->
   <div class="right">
 
-    <!-- IMU 센서값 -->
-    <div class="imu-panel">
-      <div class="sec-hdr">
-        <span>IMU 센서값 · MPU-6050</span>
-        <span class="sec-action" onclick="resetYaw()">YAW RESET</span>
+    <!-- 센서 그리드: 초음파, pitch, 로드셀, 속도 -->
+    <div class="sec-hdr">실시간 센서값</div>
+    <div class="sensor-grid">
+      <div class="s-card">
+        <div class="card-lbl">초음파 거리</div>
+        <div class="big-num" id="s-dist">--<span class="big-unit">cm</span></div>
       </div>
-      <div class="imu-grid">
-        <div class="imu-cell">
-          <div class="imu-axis">ROLL</div>
-          <div class="imu-val" id="imu-roll">0.0<span class="imu-unit">°</span></div>
-        </div>
-        <div class="imu-cell">
-          <div class="imu-axis">PITCH</div>
-          <div class="imu-val" id="imu-pitch">0.0<span class="imu-unit">°</span></div>
-        </div>
-        <div class="imu-cell" style="border-color:var(--border2);">
-          <div class="imu-axis">YAW (HDG)</div>
-          <div class="imu-val" id="imu-yaw" style="color:var(--yellow);">0.0<span class="imu-unit">°</span></div>
-        </div>
-        <div class="imu-cell" style="border-color:var(--border2);">
-          <div class="imu-axis">YAW RATE</div>
-          <div class="imu-val" id="imu-yawrate" style="color:var(--text1);font-size:17px;">0.0<span class="imu-unit">°/s</span></div>
-        </div>
-        <div class="imu-cell">
-          <div class="imu-axis">POS X</div>
-          <div class="imu-val" id="imu-posx" style="color:var(--green);font-size:17px;">0.0<span class="imu-unit">cm</span></div>
-        </div>
-        <div class="imu-cell">
-          <div class="imu-axis">POS Y</div>
-          <div class="imu-val" id="imu-posy" style="color:var(--green);font-size:17px;">0.0<span class="imu-unit">cm</span></div>
-        </div>
+      <div class="s-card">
+        <div class="card-lbl">IMU PITCH</div>
+        <div class="big-num" id="s-pitch">--<span class="big-unit">°</span></div>
+      </div>
+      <div class="s-card">
+        <div class="card-lbl">로드셀 중량</div>
+        <div class="big-num" id="s-weight">--<span class="big-unit">g</span></div>
+      </div>
+      <div class="s-card">
+        <div class="card-lbl">현재 속도</div>
+        <div class="big-num" id="s-speed" style="color:var(--cyan)">0<span class="big-unit">%</span></div>
       </div>
     </div>
 
-    <!-- 초음파 + 로드셀 -->
-    <div class="sensors-row">
-      <div class="sensor-card">
-        <div class="card-label">초음파 거리 · HC-SR04</div>
-        <div class="big-num" id="ultra-num">--<span class="big-unit">cm</span></div>
-        <div class="sub-txt" id="ultra-status">대기 중</div>
+    <!-- IMU 상세값: roll, yaw, 가속도 x/y/z -->
+    <div class="sec-hdr">IMU 상세</div>
+    <div class="sensor-grid">
+      <div class="s-card">
+        <div class="card-lbl">IMU ROLL</div>
+        <div class="big-num" id="s-roll">--<span class="big-unit">°</span></div>
       </div>
-      <div class="sensor-card">
-        <div class="card-label">로드셀 · HX711</div>
-        <div class="big-num" id="load-num">--<span class="big-unit">g</span></div>
-        <div class="sub-txt">하중</div>
+      <div class="s-card">
+        <div class="card-lbl">IMU YAW</div>
+        <div class="big-num" id="s-yaw">--<span class="big-unit">°</span></div>
       </div>
-    </div>
-
-    <!-- 로봇 상태 요약 -->
-    <div class="summary-panel">
-      <div class="sec-hdr" style="padding:0 0 6px;border:none;">
-        <span>로봇 상태</span>
-        <span style="display:flex;gap:4px;">
-          <span class="sec-action" onclick="tareLoadcell()" style="font-size:9px;">TARE</span>
-          <span class="sec-action" onclick="showCalModal()" style="font-size:9px;color:var(--yellow);border-color:var(--yellow-dim);">CAL</span>
-        </span>
+      <div class="s-card" style="border-top:1px solid var(--border)">
+        <div class="card-lbl">ACCEL X</div>
+        <div class="big-num" id="s-accel-x" style="font-size:20px">--<span class="big-unit">g</span></div>
       </div>
-      <div class="sum-row">
-        <span class="sum-key">현재 상태</span>
-        <span class="sum-val ok" id="sum-state">IDLE</span>
+      <div class="s-card" style="border-top:1px solid var(--border)">
+        <div class="card-lbl">ACCEL Y</div>
+        <div class="big-num" id="s-accel-y" style="font-size:20px">--<span class="big-unit">g</span></div>
       </div>
-      <div class="sum-row">
-        <span class="sum-key">HAT 전압</span>
-        <span class="sum-val" id="sum-hat-v">--V</span>
-      </div>
-      <div class="sum-row">
-        <span class="sum-key">Pi UPS 전압</span>
-        <span class="sum-val" id="sum-ups-v">--V</span>
-      </div>
-      <div class="sum-row">
-        <span class="sum-key">저장된 웨이포인트</span>
-        <span class="sum-val" id="sum-wp-cnt" style="color:var(--cyan)">0개</span>
+      <div class="s-card" style="border-top:1px solid var(--border);grid-column:1/-1">
+        <div class="card-lbl">ACCEL Z</div>
+        <div class="big-num" id="s-accel-z" style="font-size:20px">--<span class="big-unit">g</span></div>
       </div>
     </div>
 
-    <!-- 저장된 웨이포인트 리스트 -->
-    <div class="wp-section">
-      <div class="sec-hdr">
-        <span>저장된 웨이포인트 리스트</span>
-        <span class="sec-action" onclick="clearAllWaypoints()">전체 삭제</span>
+    <!-- FSM 상태 패널 -->
+    <div class="sec-hdr">FSM 상태</div>
+    <div class="fsm-panel">
+      <div class="fsm-state-badge" id="fsm-state">IDLE</div>
+      <div class="fsm-route-row">
+        <span class="fsm-key">배정 경로</span>
+        <span class="fsm-val" id="fsm-route">UNKNOWN</span>
       </div>
-      <div class="wp-list" id="wp-list">
-        <div class="list-empty" id="wp-empty">기록된 웨이포인트 없음</div>
+      <div class="fsm-route-row">
+        <span class="fsm-key">주행 모드</span>
+        <span class="fsm-val" id="fsm-mode">SAFE</span>
+      </div>
+      <div class="fsm-route-row">
+        <span class="fsm-key">주행 상태</span>
+        <span class="fsm-val" id="fsm-driving">정지</span>
       </div>
     </div>
 
-    <!-- 저장된 경로 리스트 -->
-    <div class="path-section">
-      <div class="sec-hdr">
-        <span>저장된 경로 리스트</span>
-        <span style="display:flex;gap:4px;">
-          <span class="sec-action" onclick="stopPath()"
-                style="color:var(--red);border-color:var(--red-dim);">중단</span>
-          <span class="sec-action" onclick="clearAllPaths()">전체 삭제</span>
-        </span>
+    <!-- 주행 모드 + 시작/정지 패널 -->
+    <div class="sec-hdr">주행 제어</div>
+    <div class="mode-panel">
+      <div class="mode-row">
+        <button class="mode-btn" id="btn-fast" onclick="setMode('FAST')">⚡ FAST</button>
+        <button class="mode-btn selected-safe" id="btn-safe" onclick="setMode('SAFE')">🛡 SAFE</button>
       </div>
-      <div class="path-list" id="path-list">
-        <div class="list-empty" id="path-empty">기록된 경로 없음</div>
+      <div class="drive-row">
+        <button class="drive-btn start" id="btn-start" onclick="startDrive()">▶ 주행 시작</button>
+        <button class="drive-btn stop"  id="btn-stop"  onclick="stopDrive()">■ 정지</button>
+      </div>
+    </div>
+
+    <!-- 현재 주입된 장애물 상태 표시 -->
+    <div class="mock-status-row">
+      <span class="mock-lbl">MOCK OBS</span>
+      <span class="mock-val" id="mock-status">None</span>
+    </div>
+
+    <!-- 데드락 경고 + 관리자 채팅창 (데드락 발생 시만 표시) -->
+    <div class="deadlock-panel" id="deadlock-panel">
+      <div class="deadlock-title">⚠ FATAL DEADLOCK — 모든 경로 차단됨</div>
+      <div class="deadlock-msg">관리자 명령을 입력하여 강제 기동 복구를 실행하십시오.</div>
+      <div class="chat-row">
+        <input class="chat-input" id="admin-input"
+               placeholder="관리자 명령 입력 (예: FORCE_RESUME)"
+               onkeypress="if(event.key==='Enter') sendAdmin()">
+        <button class="chat-send" onclick="sendAdmin()">SEND</button>
       </div>
     </div>
 
   </div><!-- /right -->
-</div>
+</div><!-- /layout -->
 
 <div id="toast"></div>
 
+<!-- ═══════════════════════════════════ SCRIPT ════════════════════════════════ -->
 <script>
 'use strict';
-// ══════════════════════════════════════════════════
-//  SocketIO 연결
-// ══════════════════════════════════════════════════
+
 const socket = io({ transports: ['websocket', 'polling'] });
 
+// ── 연결 상태 ────────────────────────────────────────────────────────────────
 socket.on('connect', () => {
   document.getElementById('conn-dot').classList.add('live');
   document.getElementById('conn-label').textContent = 'ONLINE';
@@ -604,357 +461,179 @@ socket.on('connect', () => {
 socket.on('disconnect', () => {
   document.getElementById('conn-dot').classList.remove('live');
   document.getElementById('conn-label').textContent = 'OFFLINE';
-  releaseAllKeys();
 });
 
-// ══════════════════════════════════════════════════
-//  센서 데이터 수신
-//  서버가 emit('sensor_update', {...}) 으로 1초마다 전송
-// ══════════════════════════════════════════════════
+// ── 센서 업데이트 ─────────────────────────────────────────────────────────────
 socket.on('sensor_update', (d) => {
-  // IMU — MPU6050.get_all() → {roll, pitch, yaw, yaw_rate, pos_x, pos_y}
-  if (d.imu) {
-    setText('imu-roll',    fmtDeg(d.imu.roll));
-    setText('imu-pitch',   fmtDeg(d.imu.pitch));
-    setText('imu-yaw',     fmtDeg(d.imu.yaw));
-    // yaw_rate: 회전 각속도 (°/s) — 양수=우회전, 음수=좌회전
-    const yr = d.imu.yaw_rate ?? 0;
-    const yrEl = document.getElementById('imu-yawrate');
-    if (yrEl) {
-      yrEl.innerHTML = yr + '<span class="imu-unit">°/s</span>';
-      yrEl.style.color = Math.abs(yr) > 5 ? 'var(--yellow)' : 'var(--text1)';
-    }
-    // pos_x / pos_y: dead-reckoning 추정 좌표 (cm)
-    const pxEl = document.getElementById('imu-posx');
-    const pyEl = document.getElementById('imu-posy');
-    if (pxEl) pxEl.innerHTML = (d.imu.pos_x ?? 0) + '<span class="imu-unit">cm</span>';
-    if (pyEl) pyEl.innerHTML = (d.imu.pos_y ?? 0) + '<span class="imu-unit">cm</span>';
+  // 초음파
+  const dist   = d.distance_cm ?? -1;
+  const distEl = document.getElementById('s-dist');
+  distEl.innerHTML = (dist < 0 ? '--' : dist) + '<span class="big-unit">cm</span>';
+  distEl.style.color = dist < 0 ? 'var(--text2)'
+                     : dist < 10  ? 'var(--red)'
+                     : dist < 50  ? 'var(--yellow)'
+                     : 'var(--text0)';
+
+  // IMU Pitch
+  const pitch   = d.pitch ?? 0;
+  const pitchEl = document.getElementById('s-pitch');
+  pitchEl.innerHTML = pitch + '<span class="big-unit">°</span>';
+  pitchEl.style.color = Math.abs(pitch) >= 15 ? 'var(--red)'
+                       : Math.abs(pitch) >= 7  ? 'var(--yellow)'
+                       : 'var(--text0)';
+
+  // IMU ROLL — 좌우 기울기 표시
+  const rollEl = document.getElementById('s-roll');
+  const roll   = d.imu_roll ?? 0;
+  rollEl.innerHTML   = roll + '<span class="big-unit">°</span>';
+  rollEl.style.color = Math.abs(roll) >= 15 ? 'var(--red)'
+                     : Math.abs(roll) >= 7  ? 'var(--yellow)'
+                     : 'var(--text0)';
+
+  // IMU YAW — 방위각 표시
+  const yawEl = document.getElementById('s-yaw');
+  yawEl.innerHTML   = (d.imu_yaw ?? 0).toFixed(1) + '<span class="big-unit">°</span>';
+  yawEl.style.color = 'var(--cyan)';
+
+  // 가속도 X/Y/Z (단위: g)
+  document.getElementById('s-accel-x').innerHTML = (d.accel_x ?? 0).toFixed(2) + '<span class="big-unit">g</span>';
+  document.getElementById('s-accel-y').innerHTML = (d.accel_y ?? 0).toFixed(2) + '<span class="big-unit">g</span>';
+  document.getElementById('s-accel-z').innerHTML = (d.accel_z ?? 0).toFixed(2) + '<span class="big-unit">g</span>';
+
+  // 중량
+  const wt   = d.weight_g ?? 0;
+  const wtEl = document.getElementById('s-weight');
+  wtEl.innerHTML = wt + '<span class="big-unit">g</span>';
+  wtEl.style.color = wt > 150 ? 'var(--red)' : wt > 100 ? 'var(--yellow)' : 'var(--text0)';
+
+  // 현재 속도
+  const spd   = d.speed ?? 0;
+  const spdEl = document.getElementById('s-speed');
+  spdEl.innerHTML = spd + '<span class="big-unit">%</span>';
+  spdEl.style.color = spd === 0 ? 'var(--text2)' : spd >= 50 ? 'var(--red)' : 'var(--cyan)';
+
+  // FSM 상태
+  const state   = d.fsm_state ?? 'IDLE';
+  const stateEl = document.getElementById('fsm-state');
+  stateEl.textContent = state;
+  stateEl.style.color = _fsmColor(state);
+
+  // 배정 경로
+  const routeEl = document.getElementById('fsm-route');
+  routeEl.textContent  = d.route ?? 'UNKNOWN';
+  routeEl.className    = 'fsm-val ' + _routeClass(d.route);
+
+  // 주행 모드
+  const modeEl  = document.getElementById('fsm-mode');
+  modeEl.textContent = d.drive_mode ?? 'SAFE';
+  modeEl.className   = 'fsm-val ' + (d.drive_mode === 'FAST' ? 'warn' : 'ok');
+
+  // 주행 상태
+  const drvEl   = document.getElementById('fsm-driving');
+  drvEl.textContent = d.driving ? '주행 중' : '정지';
+  drvEl.className   = 'fsm-val ' + (d.driving ? 'ok' : '');
+
+  // 시작 버튼 펄스 표시
+  document.getElementById('btn-start').classList.toggle('running', !!d.driving);
+
+  // mock_obs 상태 표시
+  const mockEl  = document.getElementById('mock-status');
+  const obs     = d.mock_obs ?? 'None';
+  mockEl.textContent = obs;
+  mockEl.className   = 'mock-val' + (obs !== 'None' ? ' injected' : '');
+
+  // 장애물 버튼 활성 상태 동기화
+  const obsKeys = ['3cm', '5cm', 'vinyl'];
+  const obsMap  = {'Bump_3cm': 'obs-3cm', 'Bump_5cm': 'obs-5cm', 'Vinyl': 'obs-vinyl'};
+  obsKeys.forEach(k => {
+    const id = 'obs-' + k;
+    document.getElementById(id)?.classList.remove('active');
+  });
+  if (obsMap[obs]) {
+    document.getElementById(obsMap[obs])?.classList.add('active');
   }
 
-  // 초음파 — UltrasonicSensor.get_distance() → float (cm, -1.0=실패)
-  if (d.ultrasonic) {
-    const dist = d.ultrasonic.distance;
-    const el   = document.getElementById('ultra-num');
-    const st   = document.getElementById('ultra-status');
-    if (dist < 0) {
-      el.innerHTML = '--<span class="big-unit">cm</span>';
-      el.style.color = 'var(--text2)';
-      st.textContent = '측정 불가';
-    } else {
-      el.innerHTML = dist + '<span class="big-unit">cm</span>';
-      if (dist < 20)       { el.style.color = 'var(--red)';    st.textContent = '근접 경고'; }
-      else if (dist < 60)  { el.style.color = 'var(--yellow)'; st.textContent = '장애물 감지'; }
-      else                 { el.style.color = 'var(--text0)';  st.textContent = '정상'; }
-    }
-  }
-
-  // 로드셀 — HX711.get_weight() → float (g)
-  if (d.loadcell) {
-    document.getElementById('load-num').innerHTML =
-      d.loadcell.weight + '<span class="big-unit">g</span>';
-  }
-
-  // HAT 배터리
-  if (d.hat_battery) {
-    const p = d.hat_battery.percent;
-    const c = p < 20 ? 'var(--red)' : p < 40 ? 'var(--yellow)' : 'var(--green)';
-    document.getElementById('hat-fill').style.cssText = `width:${p}%;background:${c}`;
-    document.getElementById('hat-pct').textContent = p.toFixed(1) + '%';
-    const v = d.hat_battery.voltage;
-    const vEl = document.getElementById('sum-hat-v');
-    vEl.textContent = v.toFixed(2) + 'V';
-    vEl.className = 'sum-val ' + (v < 6.5 ? 'crit' : v < 7.0 ? 'warn' : 'ok');
-  }
-
-  // Pi UPS 배터리
-  if (d.pi_battery) {
-    const p = d.pi_battery.percent;
-    const c = p < 20 ? 'var(--red)' : p < 40 ? 'var(--yellow)' : 'var(--green)';
-    document.getElementById('ups-fill').style.cssText = `width:${p}%;background:${c}`;
-    document.getElementById('ups-pct').textContent = p.toFixed(1) + '%';
-    const v = d.pi_battery.voltage;
-    const vEl = document.getElementById('sum-ups-v');
-    vEl.textContent = v.toFixed(2) + 'V';
-    vEl.className = 'sum-val ' + (v < 3.4 ? 'crit' : v < 3.6 ? 'warn' : 'ok');
-  }
-
-  // 로봇 상태
-  if (d.robot_state) {
-    const s     = d.robot_state;
-    const badge = document.getElementById('state-badge');
-    document.getElementById('state-txt').textContent = s;
-    badge.className = 'state-badge ' + s.toLowerCase();
-    const sumEl = document.getElementById('sum-state');
-    sumEl.textContent = s;
-    sumEl.className = 'sum-val ' + (s === 'IDLE' ? 'ok' : 'warn');
-  }
+  // 모드 버튼 선택 상태
+  const mode = d.drive_mode ?? 'SAFE';
+  document.getElementById('btn-fast').className = 'mode-btn' + (mode === 'FAST' ? ' selected-fast' : '');
+  document.getElementById('btn-safe').className = 'mode-btn' + (mode === 'SAFE' ? ' selected-safe' : '');
 });
 
-// ══════════════════════════════════════════════════
-//  그래프 데이터 수신 — 웨이포인트 + 경로 렌더
-// ══════════════════════════════════════════════════
-socket.on('graph_update', (g) => {
-  renderWaypoints(g.waypoints || {});
-  renderPaths(g.paths || {});
-});
-
-socket.on('waypoint_saved', (d) => showToast(`웨이포인트 #${d.id} 저장`, 'ok'));
-socket.on('toast', (d) => {
-  const typeMap = { success:'ok', error:'err', info:'info', ok:'ok' };
-  showToast(d.msg, typeMap[d.type] || 'info');
-});
-
-// 경로 실행 상태 수신
-socket.on('run_status', (d) => {
-  const badge = document.getElementById('state-badge');
-  const txt   = document.getElementById('state-txt');
-  if (d.running) {
-    txt.textContent = `RUN:${d.path} ${d.step||''}`;
-    badge.className = 'state-badge moving';
+// ── 데드락 경고 ───────────────────────────────────────────────────────────────
+socket.on('deadlock_alert', (d) => {
+  const panel = document.getElementById('deadlock-panel');
+  if (d.active) {
+    panel.classList.add('active');
+    showToast('⚠ DEADLOCK — 모든 경로 차단됨', 'err');
   } else {
-    txt.textContent = 'IDLE';
-    badge.className = 'state-badge idle';
+    panel.classList.remove('active');
+    document.getElementById('admin-input').value = '';
+    showToast('데드락 해제 — 주행 복구됨', 'ok');
   }
 });
 
-// ══════════════════════════════════════════════════
-//  웨이포인트 렌더링
-// ══════════════════════════════════════════════════
-let _renderedWpIds = new Set();
+// ── Toast ─────────────────────────────────────────────────────────────────────
+socket.on('toast', (d) => {
+  const tmap = { success:'ok', error:'err', info:'info', ok:'ok', warn:'warn' };
+  showToast(d.msg, tmap[d.type] || 'info');
+});
 
-function renderWaypoints(wps) {
-  const list  = document.getElementById('wp-list');
-  const empty = document.getElementById('wp-empty');
-  const count = Object.keys(wps).length;
-  document.getElementById('sum-wp-cnt').textContent = count + '개';
-
-  if (count === 0) {
-    empty.style.display = 'block';
-    list.querySelectorAll('.wp-item').forEach(el => el.remove());
-    _renderedWpIds.clear();
-    return;
-  }
-  empty.style.display = 'none';
-
-  // 삭제된 항목 제거
-  _renderedWpIds.forEach(id => {
-    if (!wps[id]) {
-      const el = list.querySelector(`[data-wpid="${id}"]`);
-      if (el) el.remove();
-      _renderedWpIds.delete(id);
-    }
-  });
-
-  // 새 항목 추가 (이미 있는 건 스킵)
-  for (const [id, wp] of Object.entries(wps)) {
-    if (_renderedWpIds.has(id)) continue;
-    _renderedWpIds.add(id);
-
-    const dist    = wp.ultra_front >= 0 ? wp.ultra_front + 'cm' : 'N/A';
-    const heading = (wp.heading !== undefined) ? wp.heading.toFixed(1) + '°' : '--';
-    const comment = wp.comment || `Point ${id}`;
-    const xtime   = wp.encoder_offset?.x_time ?? 0;
-    const ytime   = wp.encoder_offset?.y_time ?? 0;
-
-    const el = document.createElement('div');
-    el.className = 'wp-item';
-    el.dataset.wpid = id;
-    el.innerHTML = `
-      <div class="wp-num">${id}</div>
-      <div class="wp-body">
-        <div class="wp-title">${comment}</div>
-        <div class="wp-meta">hdg ${heading} · dist ${dist} · Δx${xtime}s Δy${ytime}s</div>
-      </div>
-      <div class="wp-tags">
-        <span class="tag-hdg">${heading}</span>
-        <span class="tag-dist">${dist}</span>
-      </div>
-      <span class="wp-del" onclick="deleteWp('${id}')">✕</span>
-    `;
-    list.appendChild(el);
-  }
-  list.scrollTop = list.scrollHeight;
+// ── 제어 함수들 ──────────────────────────────────────────────────────────────
+function setMode(mode) {
+  socket.emit('set_drive_mode', { mode });
 }
-
-function renderPaths(paths) {
-  const list  = document.getElementById('path-list');
-  const empty = document.getElementById('path-empty');
-  const count = Object.keys(paths).length;
-
-  list.querySelectorAll('.path-item').forEach(el => el.remove());
-  if (count === 0) { empty.style.display = 'block'; return; }
-  empty.style.display = 'none';
-
-  for (const [name, nodes] of Object.entries(paths)) {
-    const el = document.createElement('div');
-    el.className = 'path-item';
-    el.innerHTML = `
-      <span class="path-name-tag">${name}</span>
-      <span class="path-nodes-tag">[ ${nodes.join(' → ')} ]</span>
-      <span class="sec-action" style="margin-left:auto;color:var(--green);border-color:var(--green-dim);font-size:9px;"
-            onclick="runPath('${name}')">실행</span>
-      <span class="wp-del" style="display:block;"
-            onclick="deletePath('${name}')">✕</span>
-    `;
-    list.appendChild(el);
-  }
+function startDrive() {
+  socket.emit('start_drive');
 }
-
-// ══════════════════════════════════════════════════
-//  버튼 액션
-// ══════════════════════════════════════════════════
-function saveWaypoint() {
-  socket.emit('save_waypoint', { comment: '' });
+function stopDrive() {
+  socket.emit('stop_drive');
 }
-
-function savePath() {
-  const name = document.getElementById('inp-path-name').value.trim();
-  const raw  = document.getElementById('inp-path-nodes').value.trim();
-
-  if (!name) { showToast('경로 이름을 입력하세요.', 'err'); return; }
-
-  // '-' 구분자 파싱 (예: "1-2-3-5" → [1,2,3,5])
-  const nodes = raw.split('-').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n) && n > 0);
-  if (!nodes.length) { showToast('노드를 1-2-3 형식으로 입력하세요.', 'err'); return; }
-
-  socket.emit('save_path', { path_name: name, node_ids: nodes });
-  document.getElementById('inp-path-name').value  = '';
-  document.getElementById('inp-path-nodes').value = '';
+function injectObs(type) {
+  socket.emit('inject_obstacle', { obs: type });
 }
-
-// 노드 입력 자동 포맷: 숫자만 허용, 자동으로 '-' 삽입
-function fmtNodeInput(el) {
-  // 숫자와 하이픈만 유지
-  let v = el.value.replace(/[^0-9\-]/g, '');
-  // 하이픈 연속 또는 시작 하이픈 정리
-  v = v.replace(/\-{2,}/g, '-').replace(/^\-/, '');
-  el.value = v;
+function triggerNode() {
+  socket.emit('trigger_node');
 }
-
-function cancelSession() {
-  socket.emit('cancel_session');
+function sendAdmin() {
+  const cmd = document.getElementById('admin-input').value.trim();
+  if (!cmd) return;
+  socket.emit('admin_command', { command: cmd });
 }
-
-function resetYaw() {
-  socket.emit('reset_yaw');
-}
-
-function tareLoadcell() {
+function tareLc() {
   socket.emit('tare_loadcell');
-  showToast('로드셀 영점 중... (~5초)', 'info');
 }
 
-function showCalModal() {
-  document.getElementById('cal-modal').style.display = 'flex';
-  document.getElementById('cal-grams-input').focus();
+// ── 유틸 ─────────────────────────────────────────────────────────────────────
+function _fsmColor(state) {
+  if (!state || state === 'IDLE') return 'var(--text1)';
+  if (state.includes('CRITICAL') || state.includes('DEADLOCK') || state.includes('WAITING'))
+    return 'var(--red)';
+  if (state.includes('CAUTIOUS') || state.includes('SAFE') || state.includes('REROUTING') || state.includes('GUARD'))
+    return 'var(--yellow)';
+  if (state.includes('HILL') || state.includes('FAST'))
+    return 'var(--orange)';
+  if (state === 'NORMAL_CRUISE')
+    return 'var(--green)';
+  return 'var(--cyan)';
 }
-function hideCalModal() {
-  document.getElementById('cal-modal').style.display = 'none';
-}
-function runCalibration() {
-  const g = parseFloat(document.getElementById('cal-grams-input').value);
-  if (!g || g <= 0) { showToast('무게를 양수로 입력하세요.', 'err'); return; }
-  socket.emit('calibrate_loadcell', { grams: g });
-  hideCalModal();
-  showToast(`캘리브레이션 중... (${g}g 기준)`, 'info');
-}
-// 모달 바깥 클릭 시 닫기
-document.getElementById('cal-modal')?.addEventListener('click', function(e) {
-  if (e.target === this) hideCalModal();
-});
-
-function deleteWp(id) {
-  socket.emit('delete_waypoint', { id });
-}
-
-function deletePath(name) {
-  socket.emit('delete_path', { name });
+function _routeClass(route) {
+  if (!route) return '';
+  if (route === 'ROUTE_A') return 'route-a';
+  if (route === 'ROUTE_B') return 'route-b';
+  if (route === 'ROUTE_C') return 'route-c';
+  if (route === 'DEADLOCK') return 'route-dead';
+  return '';
 }
 
-function runPath(name) {
-  if (!confirm(`경로 "${name}" 을 실행하시겠습니까?`)) return;
-  socket.emit('run_path', { path_name: name });
-}
-
-function stopPath() {
-  socket.emit('stop_path');
-}
-
-function clearAllWaypoints() {
-  if (!confirm('웨이포인트를 전체 삭제하시겠습니까?\n경로의 노드 목록도 함께 비워집니다.')) return;
-  socket.emit('clear_all_waypoints');
-}
-
-function clearAllPaths() {
-  if (!confirm('경로를 전체 삭제하시겠습니까?\n웨이포인트 데이터는 유지됩니다.')) return;
-  socket.emit('clear_all_paths');
-}
-
-function onSpeed(val) {
-  document.getElementById('spd-val').textContent = val;
-  socket.emit('set_speed', { speed: parseInt(val) });
-}
-
-// ══════════════════════════════════════════════════
-//  키보드 — 방향키 이벤트 → SocketIO
-//  key_down / key_up 이벤트로 서버에 전달
-//  서버: _motor_cmd('fwd'|'bwd'|'left'|'right'|None)
-//        MotorController.move() / rotate_left() / rotate_right() 호출
-// ══════════════════════════════════════════════════
-const ARROW_KEYS = new Set(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight']);
-const KEY_DPAD   = {
-  ArrowUp:    'dk-up',
-  ArrowDown:  'dk-down',
-  ArrowLeft:  'dk-left',
-  ArrowRight: 'dk-right',
-};
-const pressedKeys = new Set();
-
-document.addEventListener('keydown', (e) => {
-  if (!ARROW_KEYS.has(e.key)) return;
-  e.preventDefault();
-  if (pressedKeys.has(e.key)) return;   // 키 반복(key repeat) 무시
-  pressedKeys.add(e.key);
-  socket.emit('key_down', { key: e.key });
-  document.getElementById(KEY_DPAD[e.key])?.classList.add('lit');
-});
-
-document.addEventListener('keyup', (e) => {
-  if (!ARROW_KEYS.has(e.key)) return;
-  e.preventDefault();
-  pressedKeys.delete(e.key);
-  socket.emit('key_up', { key: e.key });
-  document.getElementById(KEY_DPAD[e.key])?.classList.remove('lit');
-});
-
-// 탭 비활성화 시 전체 키 해제 (백그라운드 이동 방지)
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden) releaseAllKeys();
-});
-
-function releaseAllKeys() {
-  pressedKeys.forEach(k => {
-    socket.emit('key_up', { key: k });
-    document.getElementById(KEY_DPAD[k])?.classList.remove('lit');
-  });
-  pressedKeys.clear();
-}
-
-// ══════════════════════════════════════════════════
-//  Toast 알림
-// ══════════════════════════════════════════════════
 let _toastTimer = null;
 function showToast(msg, type = 'info') {
   const el = document.getElementById('toast');
   el.textContent = msg;
   el.className = 'show ' + type;
   if (_toastTimer) clearTimeout(_toastTimer);
-  _toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+  _toastTimer = setTimeout(() => el.classList.remove('show'), 2400);
 }
 
-// ══════════════════════════════════════════════════
-//  시계
-// ══════════════════════════════════════════════════
 function updateClock() {
   document.getElementById('clock').textContent =
     new Date().toLocaleTimeString('ko-KR', { hour12: false });
@@ -962,53 +641,36 @@ function updateClock() {
 setInterval(updateClock, 1000);
 updateClock();
 
-// ══════════════════════════════════════════════════
-//  유틸
-// ══════════════════════════════════════════════════
-function fmtDeg(v) {
-  return `${v}<span class="imu-unit">°</span>`;
-}
-function setText(id, html) {
-  const el = document.getElementById(id);
-  if (el) el.innerHTML = html;
-}
-</script>
+// ── 키보드 수동 조작 (W/A/S/D + 방향키 + Space) ──────────────────────────
+// keydown → socket.emit('manual_move') → dashboard.py on_manual_move
+// → motor.forward / backward / rotate_left / rotate_right / stop
+// 방향키 + Space 만 바인딩 — W/A/S/D 미사용
+const KEY_DIR_MAP = {
+  'ArrowUp':    'forward',
+  'ArrowDown':  'backward',
+  'ArrowLeft':  'left',
+  'ArrowRight': 'right',
+  ' ': 'stop',
+};
+// 연속 keydown 이벤트(키 누름 유지) 중 중복 emit 억제용 집합
+const _pressedKeys = new Set();
 
-<!-- 캘리브레이션 모달 -->
-<div id="cal-modal" style="
-  display:none;position:fixed;inset:0;
-  background:rgba(0,0,0,0.7);z-index:20000;
-  align-items:center;justify-content:center;">
-  <div style="
-    background:var(--bg3);border:1px solid var(--border2);
-    padding:24px 28px;border-radius:3px;min-width:300px;">
-    <div style="font-family:var(--label);font-size:14px;font-weight:700;
-                color:var(--cyan);letter-spacing:.1em;margin-bottom:16px;">
-      LOADCELL CALIBRATION
-    </div>
-    <div style="font-size:11px;color:var(--text1);margin-bottom:4px;">
-      1. 바구니만 올린 상태에서 TARE 버튼을 누릅니다.
-    </div>
-    <div style="font-size:11px;color:var(--text1);margin-bottom:4px;">
-      2. tare 완료 후 알고 있는 무게의 추를 올립니다.
-    </div>
-    <div style="font-size:11px;color:var(--text1);margin-bottom:16px;">
-      3. 아래 무게(g)를 입력하고 CAL 실행을 누릅니다.
-    </div>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
-      <input type="number" id="cal-grams-input" placeholder="기준 무게 (g)"
-        style="font-family:var(--mono);font-size:12px;
-               background:var(--bg0);border:1px solid var(--border2);
-               color:var(--text0);padding:7px 10px;border-radius:2px;
-               outline:none;width:140px;"
-        min="1" step="1">
-      <span style="font-size:11px;color:var(--text2);">g</span>
-    </div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;">
-      <button class="btn" onclick="hideCalModal()">취소</button>
-      <button class="btn btn-cyan" onclick="runCalibration()">CAL 실행</button>
-    </div>
-  </div>
-</div>
+document.addEventListener('keydown', (e) => {
+  const dir = KEY_DIR_MAP[e.key];
+  if (!dir) return;
+  e.preventDefault();                  // 페이지 스크롤 방지
+  if (_pressedKeys.has(e.key)) return; // 키 반복 이벤트 억제
+  _pressedKeys.add(e.key);
+  socket.emit('manual_move', { direction: dir, speed: 40 });
+});
+
+document.addEventListener('keyup', (e) => {
+  if (!KEY_DIR_MAP[e.key]) return;
+  e.preventDefault();
+  _pressedKeys.delete(e.key);
+  // 키를 떼면 정지 명령 전송
+  socket.emit('manual_move', { direction: 'stop', speed: 0 });
+});
+</script>
 </body>
 </html>

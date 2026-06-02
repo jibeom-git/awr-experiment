@@ -228,3 +228,118 @@ sudo shutdown -h now
 | 센서값 이상 | 해당 센서 개별 테스트 실행 |
 | 알 수 없는 오류 | 한지범에게 문의 |
 GUIDE
+
+~/insite/ 디렉토리 전체를 탐색하고 모든 파일을 파악한 뒤
+README.md 파일을 ~/insite/README.md 에 작성해라.
+기존 파일은 수정하지 않고 README.md 만 생성한다.
+
+README.md 에 포함할 내용:
+
+1. 프로젝트 개요
+   - 프로젝트명: Insite
+   - 목표: VLM과 멀티센서 융합 기반 자율주행 AGV
+   - 팀 구성: AI 파트 / 라인트래킹 파트 분리 개발
+
+2. 하드웨어 구성표
+   - Raspberry Pi 4 (4GB)
+   - Adeept AWR V3.0 4WD
+   - Adeept Robot HAT V3.3
+   - PCA9685 + DRV8833 모터 드라이버 (I2C1, 0x5f)
+   - OV5647 CSI 카메라 (하단 라인트래킹용)
+   - Orbbec Astra USB 카메라 (전방 장애물 인식용, RGB 모드)
+   - MPU-6050 IMU (software I2C bus5, GPIO12/13)
+   - HX711 로드셀 5kg (GPIO5/6)
+   - HC-SR04 초음파 센서 (GPIO23/24)
+   - WS2812 RGB LED (SPI, GPIO10)
+   - Pi IP 고정: 192.168.0.50
+
+3. 트랙 및 경로 구성
+   - ROUTE_A: 20도 언덕, 최단거리, 55% 이상 속도 필요
+   - ROUTE_B: 10도 언덕, 중간거리, 45% 속도
+   - ROUTE_C: 언덕 없음, 최장거리, 가장 안전
+   - 각 경로 분기점에 검은색 사각형 노드 배치
+   - 신호등: 빨강/노랑 정차, 초록 출발
+
+4. 디렉토리 구조 설명
+   실제 탐색한 파일 구조를 트리 형태로 정리하고
+   각 디렉토리와 핵심 파일의 역할을 한 줄씩 설명해라.
+
+5. 각 실행 파일 및 실행 명령어
+
+   아래 항목마다 설명과 실행 명령어를 명시해라.
+
+   [라인트래킹 + 경로 주행 대시보드] (팀원 담당)
+   - 파일: app/cv_dashboard.py
+   - 접속: http://192.168.0.50:5001
+   - 실행:
+     cd ~/insite
+     source .venv/bin/activate
+     python app/cv_dashboard.py
+
+   [AI 의사결정 대시보드] (AI 파트 담당)
+   - 파일: app/dashboard.py 또는 dashboard.py (실제 존재하는 파일 기준)
+   - 접속: http://192.168.0.50:5000
+   - 실행:
+     cd ~/insite
+     source .venv/bin/activate
+     python dashboard.py
+
+   [수동 조종 실험 데이터 수집]
+   - 파일: experiment/manual_drive.py
+   - 접속: http://192.168.0.50:5001
+   - 실행:
+     cd ~/insite
+     source .venv/bin/activate
+     python experiment/manual_drive.py
+
+   [레이블링 도구]
+   - 파일: experiment/label_tool.py
+   - 접속: http://192.168.0.50:5002
+   - 실행:
+     cd ~/insite
+     source .venv/bin/activate
+     python experiment/label_tool.py
+
+   [임계값 분석]
+   - 파일: experiment/analyze.py
+   - 실행:
+     cd ~/insite
+     source .venv/bin/activate
+     python experiment/analyze.py
+
+6. AI 파트 구조 및 동작 원리
+   - Isolation Forest: 정상 주행 대비 이상 감지 → VLM 호출 트리거
+   - XGBoost: 센서값 + Gemini 판단 기반 경로/속도 결정
+   - Gemini 2.5 Flash: Few-shot 프롬프트로 장애물 통과 가능 여부 판단
+   - 경험 기반 자기개선: 장애물 통과 결과를 obstacle_db.json에 누적 →
+     Few-shot 사례로 재활용 → XGBoost 자동 재학습
+   - 신호등 감지: OpenCV HSV 색상 필터 1차 판단, 불확실 시 Gemini fallback
+
+7. 데이터 파일 설명
+   - data/real_agv_history.csv: 주행 블랙박스 로그
+   - data/obstacle_db.json: 장애물 이미지 + 판단 결과 누적 DB
+   - data/obstacles/: 장애물 이미지 저장 디렉토리
+   - experiment/data/raw_experiment.csv: 수동 실험 수집 데이터
+   - experiment/data/thresholds.json: 실험 분석으로 추출된 임계값
+   - models/: 학습된 XGBoost, Isolation Forest 모델 저장
+
+8. 환경변수 설정
+   Gemini API 키 설정 방법:
+   export GEMINI_API_KEY="your_api_key_here"
+   또는 ~/.bashrc 에 추가:
+   echo 'export GEMINI_API_KEY="your_api_key_here"' >> ~/.bashrc
+   source ~/.bashrc
+
+9. 주의사항
+   - app/cv_dashboard.py, app/dashboard_collect.py 는 팀원 담당 파일로 수정 금지
+   - sensors/, core/, tests/ 디렉토리는 공용 드라이버로 함부로 수정 금지
+   - Claude Code 사용 시 반드시 --dangerously-skip-permissions 플래그 사용
+   - 두 대시보드를 동시에 실행하면 포트 충돌 또는 GPIO 충돌 발생 가능
+
+10. Claude Code 실행 명령어
+    cd ~/insite
+    source .venv/bin/activate
+    claude --dangerously-skip-permissions
+
+README.md 는 한국어로 작성하고 마크다운 형식을 사용해라.
+코드 블록, 표, 헤더를 적극 활용하여 가독성을 높여라.

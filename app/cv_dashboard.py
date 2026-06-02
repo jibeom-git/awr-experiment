@@ -176,6 +176,22 @@ def detect_line(frame, cfg):
     return cx, is_split, left_cx, right_cx, debug
 
 # ══════════════════════════════════════════════════════
+# 프레임 전처리: YUYV → BGR 색공간 변환 + 180도 회전
+# ══════════════════════════════════════════════════════
+def process_frame(frame):
+    """캡처된 프레임에 색공간 변환(YUYV→BGR)과 180도 회전을 적용한다."""
+    if frame is None:
+        return frame
+    # picamera2가 YUYV 포맷(2채널)으로 캡처한 경우 BGR로 변환
+    # — 변환 전에는 손/피부가 파랗게 보이는 색상 오류가 발생함
+    if frame.ndim == 3 and frame.shape[2] == 2:
+        frame = cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_YUYV)
+    # 카메라가 거꾸로 장착되어 있으므로 상하좌우 180도 회전
+    frame = cv2.flip(frame, -1)
+    return frame
+
+
+# ══════════════════════════════════════════════════════
 # 주행 루프
 # ══════════════════════════════════════════════════════
 def drive_loop():
@@ -200,7 +216,13 @@ def drive_loop():
 
     while True:
         cfg   = copy.deepcopy(config)
-        frame = cam.capture()
+        # YUYV → BGR 색공간 변환 및 180도 회전 적용
+        frame = process_frame(cam.capture())
+
+        # imencode 전 채널 수(3) 검증 — 방어 코드
+        if frame is None or frame.ndim != 3 or frame.shape[2] not in (1, 3, 4):
+            time.sleep(0.03)
+            continue
 
         _, raw_jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 65])
         cx, is_split, left_cx, right_cx, debug_frame = detect_line(frame, cfg)
@@ -264,7 +286,8 @@ def drive_loop():
                     # 왼쪽 덩어리 중심 따라가기
                     err = left_cx - CENTER_X
                     while True:
-                        frame2 = cam.capture()
+                        # 분기점 추종 중에도 색공간 변환 및 회전 적용
+                        frame2 = process_frame(cam.capture())
                         cx2, is_split2, lx2, rx2, _ = detect_line(frame2, cfg)
                         if not is_split2:
                             in_junction = False
@@ -284,7 +307,8 @@ def drive_loop():
                 elif action_at_junc == "right" and right_cx is not None:
                     # 오른쪽 덩어리 중심 따라가기
                     while True:
-                        frame2 = cam.capture()
+                        # 분기점 추종 중에도 색공간 변환 및 회전 적용
+                        frame2 = process_frame(cam.capture())
                         cx2, is_split2, lx2, rx2, _ = detect_line(frame2, cfg)
                         if not is_split2:
                             in_junction = False
@@ -377,6 +401,11 @@ def debug_feed():
     return Response(gen_stream(lambda: latest_debug),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
+@app.route('/video_feed')
+def video_feed():
+    return Response(gen_stream(lambda: latest_debug),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
+
 @app.route('/state')
 def get_state():
     with lock:
@@ -402,6 +431,24 @@ def stop():
     config['running'] = False
     motor.stop()
     return jsonify({'status': 'stopped'})
+
+@app.route('/control', methods=['POST'])
+def control():
+    """방향키 수동 제어 엔드포인트 — keydown/keyup 이벤트에서 호출"""
+    data = request.get_json(force=True)
+    direction = str(data.get('direction', 'stop'))
+    speed = int(data.get('speed', 40))
+    if direction == 'forward':
+        motor.forward(speed)
+    elif direction == 'backward':
+        motor.backward(speed)
+    elif direction == 'left':
+        motor.rotate_left(speed)
+    elif direction == 'right':
+        motor.rotate_right(speed)
+    else:
+        motor.stop()
+    return jsonify({'ok': True})
 
 @app.route('/')
 def index():
@@ -476,7 +523,7 @@ HTML = '''<!DOCTYPE html>
   <div class="card" style="grid-column: 1 / -1;">
     <h2>CAMERA VIEW</h2>
     <div style="max-width:640px;margin:0 auto;">
-      <img class="feed" src="/debug_feed">
+      <img class="feed" src="/video_feed">
     </div>
   </div>
   <div class="card">
@@ -604,6 +651,42 @@ function updateState() {
   }).catch(()=>{});
 }
 setInterval(updateState, 150);
+
+// ── 방향키 수동 제어 (W/A/S/D 미사용) ───────────────────────────────
+// keydown → /control POST → motor.forward/backward/rotate_left/rotate_right
+// keyup   → /control POST stop (키를 떼면 정지)
+const KEY_MAP = {
+  'ArrowUp':    'forward',
+  'ArrowDown':  'backward',
+  'ArrowLeft':  'left',
+  'ArrowRight': 'right',
+  ' ':          'stop',
+};
+const _held = new Set();  // 키 누름 중복 억제용 집합
+
+function sendControl(direction, speed) {
+  fetch('/control', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({direction: direction, speed: speed})
+  });
+}
+
+document.addEventListener('keydown', function(e) {
+  const dir = KEY_MAP[e.key];
+  if (!dir) return;
+  e.preventDefault();            // 방향키 페이지 스크롤 방지
+  if (_held.has(e.key)) return;  // 키 누름 유지 시 연속 이벤트 억제
+  _held.add(e.key);
+  sendControl(dir, 40);
+});
+
+document.addEventListener('keyup', function(e) {
+  if (!KEY_MAP[e.key]) return;
+  e.preventDefault();
+  _held.delete(e.key);
+  sendControl('stop', 0);        // 키를 떼면 즉시 정지
+});
 </script>
 </body>
 </html>'''

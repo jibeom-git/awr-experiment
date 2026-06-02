@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Insite 수동 조종 데이터 수집</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #0f1117; color: #e2e8f0; min-height: 100vh; padding: 16px; }
+
+  /* 상단 헤더: 타이틀 + 교정 버튼 나란히 배치 */
+  .top-bar { display: flex; align-items: center; gap: 14px; margin-bottom: 10px; flex-wrap: wrap; }
+  h1 { font-size: 1.2rem; color: #7dd3fc; letter-spacing: 1px; }
+
+  /* [수정 3] 교정 시작 버튼 */
+  #btn-calib {
+    background: #7c3aed; border: none; color: white;
+    padding: 8px 16px; border-radius: 8px; cursor: pointer;
+    font-size: 0.85rem; white-space: nowrap;
+  }
+  #btn-calib:hover { background: #6d28d9; }
+  #btn-calib:disabled { background: #4b5563; cursor: not-allowed; }
+
+  /* [수정 3] 교정 상태 배너 */
+  #calib-banner {
+    background: #1e1b4b; border: 1px solid #4338ca; border-radius: 8px;
+    padding: 10px 14px; margin-bottom: 10px; display: none;
+  }
+  #calib-msg { font-size: 0.88rem; color: #a5b4fc; font-weight: 600; }
+  #calib-result-area { margin-top: 8px; display: none; }
+  #calib-result-area h3 { font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+  .calib-row { display: flex; justify-content: space-between; font-size: 0.82rem; padding: 3px 0; border-bottom: 1px solid #1e293b; }
+  .calib-row .ck  { color: #64748b; }
+  .calib-row .cv  { color: #4ade80; font-weight: 600; }
+
+  /* 메인 3열 그리드 */
+  .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .card { background: #1e2433; border-radius: 10px; padding: 14px; }
+  .card h2 { font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
+
+  /* 조종 패널 */
+  .dpad { display: grid; grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr; gap: 6px; width: 160px; margin: 0 auto 12px; }
+  .dpad button { background: #2d3748; border: none; border-radius: 8px; color: #e2e8f0; font-size: 1.1rem; padding: 14px; cursor: pointer; transition: background 0.1s; }
+  .dpad button:active, .dpad button.active { background: #3b82f6; }
+  .dpad .empty { visibility: hidden; }
+  .speed-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+  .speed-row label { font-size: 0.75rem; color: #94a3b8; white-space: nowrap; }
+  input[type=range] { flex: 1; accent-color: #3b82f6; }
+  #speed-val { font-weight: bold; color: #7dd3fc; width: 36px; text-align: right; }
+
+  /* 레이블 버튼 */
+  .label-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .label-btn { border: 2px solid transparent; border-radius: 8px; padding: 8px 6px; font-size: 0.78rem; cursor: pointer; background: #2d3748; color: #e2e8f0; transition: all 0.15s; }
+  .label-btn.selected { border-color: #3b82f6; background: #1d4ed8; color: #fff; }
+  .label-btn:hover { background: #374151; }
+
+  /* 결과 마킹 */
+  .result-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .result-btn { border: 2px solid transparent; border-radius: 8px; padding: 8px 6px; font-size: 0.75rem; cursor: pointer; background: #2d3748; color: #e2e8f0; transition: all 0.15s; }
+  .result-btn.selected { border-color: #f59e0b; background: #92400e; color: #fff; }
+  .result-btn[data-result="normal"].selected { border-color: #10b981; background: #064e3b; }
+
+  /* 센서 패널 */
+  .sensor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .sensor-item { background: #0f1117; border-radius: 6px; padding: 8px; }
+  .sensor-item .key { font-size: 0.68rem; color: #64748b; }
+  .sensor-item .val { font-size: 1.05rem; font-weight: 600; color: #e2e8f0; }
+  .sensor-item .val.warn { color: #ef4444; }
+
+  /* 경보 */
+  #alerts { margin-top: 10px; }
+  .alert-msg { color: #ef4444; font-size: 0.8rem; margin-bottom: 4px; font-weight: 600; }
+
+  /* 기록 제어 */
+  .rec-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  #btn-rec-start { background: #16a34a; border: none; color: white; padding: 10px 18px; border-radius: 8px; cursor: pointer; font-size: 0.9rem; }
+  #btn-rec-stop  { background: #dc2626; border: none; color: white; padding: 10px 18px; border-radius: 8px; cursor: pointer; font-size: 0.9rem; }
+  .rec-status { font-size: 0.8rem; }
+  .rec-status.on  { color: #4ade80; font-weight: bold; }
+  .rec-status.off { color: #64748b; }
+  #row-count { font-size: 0.85rem; color: #94a3b8; margin-top: 4px; }
+
+  /* [수정 4] 웹캠 영역: 그리드 하단 전체 폭 */
+  .camera-section { margin-top: 12px; }
+  .camera-card { background: #1e2433; border-radius: 10px; padding: 14px; }
+  .camera-card h2 { font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
+  #camera-stream { max-width: 100%; border-radius: 6px; display: block; }
+  /* 카메라 없을 때 안내 텍스트 */
+  #no-camera-msg {
+    display: none; color: #64748b; text-align: center;
+    padding: 30px 0; font-size: 0.9rem; border: 1px dashed #334155;
+    border-radius: 6px;
+  }
+
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 600px) { .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<!-- ─── 상단 헤더: 타이틀 + [교정 시작] 버튼 ───────────────────────────── -->
+<div class="top-bar">
+  <h1>⚙ INSITE 수동 조종 데이터 수집 — 포트 5001</h1>
+  <!-- [수정 3] 교정 시작 버튼: 클릭 시 서버에 start_calibration 이벤트 전송 -->
+  <button id="btn-calib" onclick="startCalib()">🔧 교정 시작</button>
+</div>
+
+<!-- [수정 3] 교정 상태 배너: 교정 진행 중 / 결과 표시 영역 -->
+<div id="calib-banner">
+  <span id="calib-msg">교정 시작...</span>
+  <!-- 교정 완료 후 결과 항목들이 여기에 표시됨 -->
+  <div id="calib-result-area">
+    <h3 style="margin-top:10px;">교정 결과</h3>
+    <div class="calib-row"><span class="ck">HX711 영점</span><span class="cv" id="cr-hx711">—</span></div>
+    <div class="calib-row"><span class="ck">IMU pitch offset (°)</span><span class="cv" id="cr-pitch">—</span></div>
+    <div class="calib-row"><span class="ck">IMU roll offset (°)</span><span class="cv" id="cr-roll">—</span></div>
+    <div class="calib-row"><span class="ck">초음파 기준 거리 (cm)</span><span class="cv" id="cr-sonic">—</span></div>
+  </div>
+</div>
+
+<!-- ─── 메인 3열 그리드 ──────────────────────────────────────────────────── -->
+<div class="grid">
+
+  <!-- ① 조종 패널 -->
+  <div class="card">
+    <h2>조종 패널 (키보드: W/A/S/D, Space)</h2>
+    <div class="dpad">
+      <div class="empty"></div>
+      <button id="btn-fwd"   onmousedown="sendCmd('forward')"  onmouseup="sendCmd('stop')"   ontouchstart="sendCmd('forward')"  ontouchend="sendCmd('stop')">▲</button>
+      <div class="empty"></div>
+      <button id="btn-left"  onmousedown="sendCmd('left')"     onmouseup="sendCmd('stop')"   ontouchstart="sendCmd('left')"     ontouchend="sendCmd('stop')">◀</button>
+      <button id="btn-stop"  onclick="sendCmd('stop')">■</button>
+      <button id="btn-right" onmousedown="sendCmd('right')"    onmouseup="sendCmd('stop')"   ontouchstart="sendCmd('right')"    ontouchend="sendCmd('stop')">▶</button>
+      <div class="empty"></div>
+      <button id="btn-bwd"   onmousedown="sendCmd('backward')" onmouseup="sendCmd('stop')"   ontouchstart="sendCmd('backward')" ontouchend="sendCmd('stop')">▼</button>
+      <div class="empty"></div>
+    </div>
+    <div class="speed-row">
+      <label>속도</label>
+      <input type="range" id="speed-slider" min="0" max="100" step="10" value="50" oninput="onSpeedChange(this.value)">
+      <span id="speed-val">50%</span>
+    </div>
+  </div>
+
+  <!-- ② 실험 레이블 선택 -->
+  <div class="card">
+    <h2>실험 레이블</h2>
+    <div class="label-grid">
+      <button class="label-btn selected" data-label="정상 평지"   onclick="setLabel(this)">정상 평지</button>
+      <button class="label-btn"          data-label="20도 언덕"   onclick="setLabel(this)">20도 언덕</button>
+      <button class="label-btn"          data-label="10도 언덕"   onclick="setLabel(this)">10도 언덕</button>
+      <button class="label-btn"          data-label="비닐 노면"   onclick="setLabel(this)">비닐 노면</button>
+      <button class="label-btn"          data-label="3cm 방지턱"  onclick="setLabel(this)">3cm 방지턱</button>
+      <button class="label-btn"          data-label="5cm 방지턱"  onclick="setLabel(this)">5cm 방지턱</button>
+    </div>
+
+    <h2 style="margin-top:12px;">결과 마킹</h2>
+    <div class="result-grid">
+      <button class="result-btn selected" data-result="normal"        onclick="setResult(this)">✓ 정상 통과</button>
+      <button class="result-btn"          data-result="hill_fail"     onclick="setResult(this)">✗ 등판 실패</button>
+      <button class="result-btn"          data-result="slip"          onclick="setResult(this)">⚡ 슬립 발생</button>
+      <button class="result-btn"          data-result="impact"        onclick="setResult(this)">💥 충격 과다</button>
+      <button class="result-btn"          data-result="cautious_pass" onclick="setResult(this)">△ 주의 통과</button>
+    </div>
+  </div>
+
+  <!-- ③ 기록 제어 + 실시간 센서 -->
+  <div class="card">
+    <h2>기록 제어</h2>
+    <div class="rec-row">
+      <button id="btn-rec-start" onclick="startRec()">● 기록 시작</button>
+      <button id="btn-rec-stop"  onclick="stopRec()">■ 기록 정지</button>
+      <span id="rec-status" class="rec-status off">대기 중</span>
+    </div>
+    <div id="row-count">저장된 행: 0</div>
+
+    <h2 style="margin-top:14px;">실시간 센서</h2>
+    <div class="sensor-grid">
+      <div class="sensor-item"><div class="key">pitch (°)</div><div class="val" id="s-pitch">—</div></div>
+      <div class="sensor-item"><div class="key">pitch_delta</div><div class="val" id="s-delta">—</div></div>
+      <div class="sensor-item"><div class="key">weight (g)</div><div class="val" id="s-weight">—</div></div>
+      <div class="sensor-item"><div class="key">sonic (cm)</div><div class="val" id="s-sonic">—</div></div>
+      <div class="sensor-item"><div class="key">accel_x (m/s²)</div><div class="val" id="s-ax">—</div></div>
+      <div class="sensor-item"><div class="key">accel_y (m/s²)</div><div class="val" id="s-ay">—</div></div>
+      <div class="sensor-item"><div class="key">accel_z (m/s²)</div><div class="val" id="s-az">—</div></div>
+      <!-- [수정 2] Z축 순간 변화량 표시 추가 -->
+      <div class="sensor-item"><div class="key">accel_z_delta</div><div class="val" id="s-zdelta">—</div></div>
+    </div>
+    <div id="alerts"></div>
+  </div>
+
+</div><!-- /.grid -->
+
+<!-- ─── [수정 4] 웹캠 실시간 영상 ───────────────────────────────────────── -->
+<div class="camera-section">
+  <div class="camera-card">
+    <h2>실시간 웹캠 (/video_feed)</h2>
+    <!--
+      onerror: 서버가 503(카메라 없음)을 반환하면 img 로드 실패 → onCameraError() 호출
+      src는 MJPEG 스트리밍 엔드포인트
+    -->
+    <img id="camera-stream"
+         src="/video_feed"
+         alt="웹캠 스트림"
+         onerror="onCameraError()"
+         style="max-width:640px; border-radius:6px; display:block;">
+    <!-- 카메라 없거나 스트림 실패 시 표시 -->
+    <div id="no-camera-msg">📷 카메라 없음 (서버에서 웹캠을 인식하지 못했습니다)</div>
+  </div>
+</div>
+
+<script>
+const socket = io();
+let currentSpeed = 50;
+let activeDir    = null;
+
+// ── [수정 3] SocketIO: 교정 상태 수신 ───────────────────────────────────────
+socket.on("calibration_status", d => {
+  const banner = document.getElementById("calib-banner");
+  banner.style.display = "block";
+  document.getElementById("calib-msg").textContent = "🔧 교정 중... " + (d.msg || "");
+  document.getElementById("calib-result-area").style.display = "none";
+});
+
+// ── [수정 3] SocketIO: 교정 완료 수신 — 결과 값 표시 ────────────────────────
+socket.on("calibration_done", d => {
+  document.getElementById("calib-msg").textContent = "✅ 교정 완료";
+  document.getElementById("cr-hx711").textContent = d.hx711_tare        ?? "—";
+  document.getElementById("cr-pitch").textContent = d.imu_pitch_zero    ?? "—";
+  document.getElementById("cr-roll").textContent  = d.imu_roll_zero     ?? "—";
+  document.getElementById("cr-sonic").textContent = d.sonic_baseline_cm ?? "—";
+  document.getElementById("calib-result-area").style.display = "block";
+  // 교정 완료 후 버튼 재활성화
+  document.getElementById("btn-calib").disabled = false;
+  document.getElementById("btn-calib").textContent = "🔧 교정 시작";
+});
+
+// ── SocketIO: 센서 데이터 수신 ──────────────────────────────────────────────
+socket.on("sensor_update", d => {
+  setText("s-pitch",  d.pitch       != null ? d.pitch.toFixed(2)       : "—");
+  setText("s-delta",  d.pitch_delta != null ? d.pitch_delta.toFixed(3) : "—");
+  setText("s-weight", d.weight      != null ? d.weight.toFixed(1)      : "—");
+  setText("s-sonic",  d.sonic       != null ? d.sonic.toFixed(1)       : "—");
+  setText("s-ax",     d.accel_x     != null ? d.accel_x.toFixed(3)     : "—");
+  setText("s-ay",     d.accel_y     != null ? d.accel_y.toFixed(3)     : "—");
+  setText("s-az",     d.accel_z     != null ? d.accel_z.toFixed(3)     : "—");
+  // [수정 2] Z축 순간 변화량 표시
+  setText("s-zdelta", d.accel_z_delta != null ? d.accel_z_delta.toFixed(3) : "—");
+
+  // 이상 경보 색상: pitch_delta 급변
+  setWarn("s-delta",  d.pitch_delta   != null && Math.abs(d.pitch_delta) > 3.0);
+  // [수정 2] Z축 경고: 절대값(9.81) 대신 순간 변화량(accel_z_delta) 기준으로 판단
+  setWarn("s-zdelta", d.accel_z_delta != null && Math.abs(d.accel_z_delta) > 4.0);
+
+  // 경보 메시지 렌더링
+  const alertBox = document.getElementById("alerts");
+  alertBox.innerHTML = "";
+  if (d.alerts && d.alerts.length) {
+    d.alerts.forEach(a => {
+      const p = document.createElement("p");
+      p.className = "alert-msg";
+      p.textContent = a;
+      alertBox.appendChild(p);
+    });
+  }
+
+  // 기록 상태 표시
+  const recEl = document.getElementById("rec-status");
+  if (d.recording) {
+    recEl.textContent = "● 기록 중";
+    recEl.className = "rec-status on";
+  } else {
+    recEl.textContent = "대기 중";
+    recEl.className = "rec-status off";
+  }
+  document.getElementById("row-count").textContent = `저장된 행: ${d.row_count ?? 0}`;
+});
+
+// ── 유틸 ────────────────────────────────────────────────────────────────────
+function setText(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
+function setWarn(id, warn) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.toggle("warn", warn);
+}
+
+// ── [수정 1] 모터 명령: SocketIO motor_cmd 이벤트 전송 ──────────────────────
+//    서버에서 Move.move() / Move.motorStop() 으로 처리됨
+function sendCmd(direction) {
+  socket.emit("motor_cmd", { direction, speed: currentSpeed });
+  activeDir = direction;
+  // 버튼 하이라이트 갱신
+  ["btn-fwd","btn-bwd","btn-left","btn-right","btn-stop"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove("active");
+  });
+  const map = { forward:"btn-fwd", backward:"btn-bwd", left:"btn-left", right:"btn-right", stop:"btn-stop" };
+  const activeBtn = document.getElementById(map[direction]);
+  if (activeBtn) activeBtn.classList.add("active");
+}
+
+function onSpeedChange(val) {
+  currentSpeed = parseInt(val);
+  document.getElementById("speed-val").textContent = val + "%";
+  // 주행 중이면 속도 변경 즉시 반영
+  if (activeDir && activeDir !== "stop") {
+    sendCmd(activeDir);
+  }
+}
+
+// ── 키보드 제어: 방향키 + Space (W/A/S/D 미사용) ────────────────────────────
+const keyMap = {
+  ArrowUp:"forward", ArrowDown:"backward", ArrowLeft:"left", ArrowRight:"right",
+  " ":"stop",
+};
+const keysDown = {};
+
+document.addEventListener("keydown", e => {
+  const dir = keyMap[e.key];
+  if (!dir) return;
+  e.preventDefault();
+  if (!keysDown[e.key]) {
+    keysDown[e.key] = true;
+    sendCmd(dir);
+  }
+});
+
+document.addEventListener("keyup", e => {
+  const dir = keyMap[e.key];
+  if (!dir) return;
+  delete keysDown[e.key];
+  if (dir !== "stop") sendCmd("stop");
+});
+
+// ── 레이블 / 결과 마킹 ──────────────────────────────────────────────────────
+function setLabel(btn) {
+  document.querySelectorAll(".label-btn").forEach(b => b.classList.remove("selected"));
+  btn.classList.add("selected");
+  socket.emit("set_label", { label: btn.dataset.label });
+}
+
+function setResult(btn) {
+  document.querySelectorAll(".result-btn").forEach(b => b.classList.remove("selected"));
+  btn.classList.add("selected");
+  socket.emit("set_result", { result: btn.dataset.result });
+}
+
+// ── 기록 제어 ────────────────────────────────────────────────────────────────
+function startRec() { socket.emit("start_recording"); }
+function stopRec()  { socket.emit("stop_recording");  }
+
+// ── [수정 3] 교정 시작 ────────────────────────────────────────────────────────
+function startCalib() {
+  const btn = document.getElementById("btn-calib");
+  btn.disabled = true;
+  btn.textContent = "교정 중...";
+  // 배너 초기화 후 표시
+  document.getElementById("calib-result-area").style.display = "none";
+  document.getElementById("calib-msg").textContent = "교정 시작...";
+  document.getElementById("calib-banner").style.display = "block";
+  socket.emit("start_calibration");
+}
+
+// ── [수정 4] 웹캠 로드 실패 시 처리 ─────────────────────────────────────────
+function onCameraError() {
+  // img 숨기고 안내 텍스트 표시
+  document.getElementById("camera-stream").style.display = "none";
+  document.getElementById("no-camera-msg").style.display = "block";
+}
+</script>
+</body>
+</html>

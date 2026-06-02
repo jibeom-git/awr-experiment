@@ -474,19 +474,10 @@ def on_disconnect():
     _motor_cmd(None)
 
 
-@socketio.on('key_down')
-def on_key_down(data):
-    km = {'ArrowUp': 'fwd', 'ArrowDown': 'bwd',
-          'ArrowLeft': 'left', 'ArrowRight': 'right'}
-    d = km.get(data.get('key', ''))
-    if d:
-        _motor_cmd(d)
-
-
-@socketio.on('key_up')
-def on_key_up(data):
-    if data.get('key', '') in ('ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'):
-        _motor_cmd(None)
+@socketio.on('manual_move')
+def on_manual_move(data):
+    dm = {'forward': 'fwd', 'backward': 'bwd', 'left': 'left', 'right': 'right'}
+    _motor_cmd(dm.get(str(data.get('direction', 'stop'))))
 
 
 @socketio.on('save_waypoint')

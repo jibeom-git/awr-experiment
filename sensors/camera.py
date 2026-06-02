@@ -1,15 +1,5 @@
 # sensors/camera.py
-# OV5647 RGB 카메라 드라이버 (CSI, picamera2)
-#
-# [수정 내역]
-# 1. capture() 예외 처리 추가
-#    - 카메라 미응답 또는 버스 오류 시 None 대신 zeros 배열 반환
-#    - 호출 측에서 None 체크 없이 안전하게 사용 가능
-# 2. close() 중복 호출 안전화
-#    - self._started 플래그로 중복 stop()/close() 방지
-# 3. Picamera2 import 실패 시 mock 모드 진입
-#    - Pi 외 환경에서 import만으로 크래시 나던 문제 방지
-# 4. is_opened() 공개 메서드 추가
+# OV5647 RGB 카메라 드라이버 (CSI, picamera2) 및 Orbbec Astra USB RGB 드라이버
 
 import numpy as np
 
@@ -41,9 +31,6 @@ class Camera:
 
         try:
             self.cam = Picamera2()
-            # RGB888 고정: picamera2의 BGR888은 Pi OS 버전에 따라 실제 채널 순서가
-            # 달라지는 문제가 있음. RGB888은 항상 RGB 순서가 보장되므로 이걸 사용하고
-            # capture() 내부에서 cv2.COLOR_RGB2BGR 변환을 한 번만 적용.
             config   = self.cam.create_preview_configuration(
                 main={"size": (width, height), "format": "RGB888"}
             )
@@ -56,13 +43,6 @@ class Camera:
             self._started = False
 
     def capture(self) -> np.ndarray:
-        """
-        프레임 캡처.
-        - format=RGB888 → capture_array()는 항상 RGB 반환
-        - cv2.COLOR_RGB2BGR 변환 후 BGR로 반환 (cv2.imencode 바로 사용 가능)
-        - 카메라 180도 회전 적용 (거꾸로 장착)
-        - 실패 시 zeros 배열(height, width, 3) 반환
-        """
         _empty = np.zeros((self._height, self._width, 3), dtype=np.uint8)
 
         if self._mock or not self._started or self.cam is None:
@@ -71,16 +51,10 @@ class Camera:
         try:
             frame = self.cam.capture_array()   # picamera2 RGB888
 
-            # 카메라 180도 회전 (거꾸로 장착)
             if _CV2_AVAILABLE:
                 frame = cv2.rotate(frame, cv2.ROTATE_180)
             else:
                 frame = np.rot90(frame, 2).copy()
-
-            # picamera2의 RGB888은 이 Pi 환경에서 실제로 BGR 메모리 배치로 저장됨
-            # → cvtColor 없이 그대로 cv2.imencode 에 넘기면 올바른 색상 출력
-            # 만약 색이 뒤집혀 보이면 아래 주석을 해제할 것:
-            # frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
             return frame
         except Exception as e:
@@ -88,14 +62,9 @@ class Camera:
             return _empty
 
     def is_opened(self) -> bool:
-        """카메라 활성 여부 반환"""
         return self._started and not self._mock
 
     def close(self):
-        """
-        [수정] _started 플래그로 중복 stop/close 방지
-        stop() 없이 close()만 호출해도 안전
-        """
         if not self._started or self.cam is None:
             return
         try:
@@ -108,3 +77,71 @@ class Camera:
             pass
         self._started = False
         self.cam      = None
+
+
+class USBCamera:
+    """
+    [고도화] Orbbec Astra 카메라의 USB RGB 스트림을 전담 제어하는 클래스입니다.
+    하드코딩된 인덱스 오류를 방지하기 위해 가용한 video 장치 노드를 자동 탐색합니다.
+    """
+    def __init__(self, device_index: int = 0, width: int = 640, height: int = 480):
+        self._width = width
+        self._height = height
+        self.cap = None
+        self._started = False
+        self._device_index = device_index
+
+        if not _CV2_AVAILABLE:
+            print("[USBCamera] OpenCV 로드 불능으로 인한 Mock 모드 진입")
+            return
+
+        # 가용한 비디오 노드 목록을 순차 스캔하여 실제 프레임이 읽히는 장치 탐색
+        # 오르벡 카메라는 대개 0, 2, 4, 6번 인덱스 중 하나에 RGB 채널이 할당됩니다.
+        candidate_indices = [self._device_index, 0, 1, 2, 4, 6]
+        
+        for idx in candidate_indices:
+            try:
+                print(f"[USBCamera] 비디오 디바이스 노드 스캔 중... (Index: {idx})")
+                test_cap = cv2.VideoCapture(idx)
+                if test_cap.isOpened():
+                    # 단순히 장치가 열리는 것뿐만 아니라, 실제 이미지 데이터가 파싱되는지 검증
+                    ret, frame = test_cap.read()
+                    if ret and frame is not None and frame.size > 0:
+                        self.cap = test_cap
+                        self._device_index = idx
+                        self._started = True
+                        print(f"[USBCamera] AI용 USB RGB 카메라 탐색 성공 (최종 바인딩 Index: {idx})")
+                        break
+                    else:
+                        test_cap.release()
+            except Exception as e:
+                print(f"[USBCamera] 인덱스 {idx} 테스트 중 예외 발생: {e}")
+
+        if not self._started:
+            print("[USBCamera] 경고: 유효한 USB RGB 비디오 스트림 노드를 찾지 못했습니다. 디바이스 연결을 확인하십시오.")
+
+    def capture(self) -> np.ndarray:
+        """
+        AI 전방 추론 및 대시보드 송출용 단일 프레임을 취득합니다.
+        """
+        _empty = np.zeros((self._height, self._width, 3), dtype=np.uint8)
+        if not self._started or self.cap is None:
+            return _empty
+        try:
+            ret, frame = self.cap.read()
+            if not ret or frame is None:
+                return _empty
+            return frame
+        except Exception as e:
+            print(f"[USBCamera] 프레임 디코딩 오류: {e}")
+            return _empty
+
+    def close(self):
+        if self.cap is not None:
+            try:
+                self.cap.release()
+            except Exception:
+                pass
+            self._started = False
+            self.cap = None
+            print(f"[USBCamera] Index {self._device_index} 자원 반환 완료")
