@@ -1,5 +1,5 @@
 # app/cv_dashboard.py
-# OpenCV 라인 추종 + 분기점 경로 선택 대시보드
+# OpenCV 라인 추종 + 초록 분기점 표식 기반 경로 선택 대시보드
 #
 # 실행: python app/cv_dashboard.py
 # 접속: http://192.168.0.50:5001
@@ -18,45 +18,62 @@ app   = Flask(__name__)
 cam   = Camera(width=320, height=240)
 motor = MotorController()
 
-# ══════════════════════════════════════════════════════
-# 경로 정의
-# ══════════════════════════════════════════════════════
 ROUTES = {
     "A": {},
     "B": {1: "left",  2: "right", 5: "right"},
     "C": {1: "left",  2: "straight", 3: "right", 4: "right", 5: "straight"},
 }
 
-# ══════════════════════════════════════════════════════
-# 설정값
-# ══════════════════════════════════════════════════════
 config = {
-    "base_speed":   45,
-    "turn_speed":   20,
-    "spin_speed":   30,
-    "thresh":       80,
-    "roi_top":      0.6,
-    "dead_zone":    150,    # 낮게 설정 → 작은 오차도 보정
-    "kp":           0.20,
-    "ki":           0.002, # 적분 게인
-    "running":      False,
-    "route":        "A",
+    "base_speed":     35,
+    "turn_speed":     20,
+    "spin_speed":     25,
+    "thresh":         45,
+    "roi_top":        0.65,
+    "dead_zone":      15,
+    "kp":             0.7,
+    "ki":             0.002,
+    "running":        False,
+    "route":          "A",
+    "green_h_min":    30,
+    "green_h_max":    85,
+    "green_s_min":    80,
+    "green_v_min":    50,
+    "green_min_area": 200,
+    "forward_time":   0.5,
 }
 
 lock  = threading.Lock()
 state = {
     "cx": None, "error": 0, "correction": 0,
     "action": "정지", "lost": False, "fps": 0,
-    "junction_count": 0, "route": "A",
+    "junction_count": 0, "route": "A", "green_area": 0,
 }
-latest_raw   = None
 latest_debug = None
 
 # ══════════════════════════════════════════════════════
+# 전역 분기점 카운트
+# ══════════════════════════════════════════════════════
+g_junction_count = 0
+g_junction_lock  = threading.Lock()
+
+def get_junction_count():
+    with g_junction_lock:
+        return g_junction_count
+
+def increment_junction():
+    global g_junction_count
+    with g_junction_lock:
+        g_junction_count += 1
+        return g_junction_count
+
+def reset_junction():
+    global g_junction_count
+    with g_junction_lock:
+        g_junction_count = 0
+
+# ══════════════════════════════════════════════════════
 # 모터
-# M4(왼앞) M2(오른앞)
-# M3(왼뒤) M1(오른뒤)
-# motor.py가 DIR 보정 처리 → direction=1 이 전진
 # ══════════════════════════════════════════════════════
 def go_forward(speed):
     motor.set_motor(1, 1, speed)
@@ -89,18 +106,12 @@ def spin_right(speed):
     motor.set_motor(1, -1, speed)
 
 # ══════════════════════════════════════════════════════
-# 라인 감지 + 분기점 감지
+# 라인 + 초록 감지
 # ══════════════════════════════════════════════════════
-def detect_line(frame, cfg):
-    """
-    검은 선 중심 및 분기점 감지.
-    Returns:
-        cx: 선 중심 X (없으면 None)
-        is_split: 분기점 여부 (윤곽선 2개 이상)
-        left_cx: 왼쪽 덩어리 중심 (분기점 시)
-        right_cx: 오른쪽 덩어리 중심 (분기점 시)
-        debug: 시각화 프레임
-    """
+def detect_line_and_green(frame, cfg):
+    if frame is None or len(frame.shape) < 3 or frame.shape[2] != 3:
+        return None, 0, False, frame
+
     h, w  = frame.shape[:2]
     roi_y = int(h * cfg["roi_top"])
     roi   = frame[roi_y:h, :]
@@ -110,43 +121,30 @@ def detect_line(frame, cfg):
     kernel = np.ones((3, 3), np.uint8)
     binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
 
-    # 윤곽선 찾기
-    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    M  = cv2.moments(binary)
+    cx = None
+    cy = roi_y
+    if M['m00'] > 0:
+        cx = int(M['m10'] / M['m00'])
+        cy = int(M['m01'] / M['m00']) + roi_y
 
-    # 작은 노이즈 제거 (면적 50 이하)
-    contours = [c for c in contours if cv2.contourArea(c) > 50]
+    # 초록 감지 (ROI 안에서만)
+    roi_hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    lower = np.array([cfg["green_h_min"], cfg["green_s_min"], cfg["green_v_min"]])
+    upper = np.array([cfg["green_h_max"], 255, 255])
+    green_mask = cv2.inRange(roi_hsv, lower, upper)
+    green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_OPEN, kernel)
 
-    cx        = None
-    is_split  = False
-    left_cx   = None
-    right_cx  = None
-    cy        = roi_y
+    green_area  = int(np.sum(green_mask > 0))
+    is_junction = green_area > cfg["green_min_area"]
 
-    if len(contours) == 0:
-        pass  # 선 없음
+    green_cx = green_cy = None
+    if is_junction:
+        Mg = cv2.moments(green_mask)
+        if Mg['m00'] > 0:
+            green_cx = int(Mg['m10'] / Mg['m00'])
+            green_cy = int(Mg['m01'] / Mg['m00'])+ roi_y
 
-    elif len(contours) == 1:
-        # 직선 구간
-        M = cv2.moments(contours[0])
-        if M['m00'] > 0:
-            cx = int(M['m10'] / M['m00'])
-            cy = int(M['m01'] / M['m00']) + roi_y
-
-    else:
-        # 분기점: 윤곽선 2개 이상
-        is_split = True
-        centers = []
-        for c in contours:
-            M = cv2.moments(c)
-            if M['m00'] > 0:
-                centers.append(int(M['m10'] / M['m00']))
-
-        centers.sort()
-        left_cx  = centers[0]
-        right_cx = centers[-1]
-        cx = (left_cx + right_cx) // 2  # 전체 중심
-
-    # 디버그 프레임
     debug = frame.copy()
     cv2.line(debug, (0, roi_y), (w, roi_y), (255, 180, 0), 2)
     cv2.line(debug, (w//2, roi_y), (w//2, h), (0, 80, 255), 1)
@@ -161,76 +159,104 @@ def detect_line(frame, cfg):
         cv2.putText(debug, f"err={err:+d}", (5, roi_y - 8),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 80), 1)
 
-    if is_split:
-        cv2.putText(debug, "JUNCTION!", (5, 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
-        if left_cx:
-            cv2.circle(debug, (left_cx, cy), 6, (255, 100, 0), -1)
-        if right_cx:
-            cv2.circle(debug, (right_cx, cy), 6, (0, 100, 255), -1)
+    if is_junction and green_cx is not None:
+        cnts, _ = cv2.findContours(green_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(debug, cnts, -1, (0, 255, 0), 2)
+        cv2.circle(debug, (green_cx, green_cy), 12, (0, 255, 0), 3)
+        cv2.putText(debug, f"GREEN! {green_area}px", (5, 20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
     else:
-        cv2.putText(debug, "LINE LOST" if cx is None else "TRACKING",
-                    (5, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                    (0, 60, 255) if cx is None else (0, 255, 80), 1)
+        cv2.putText(debug, f"green={green_area}px", (5, 20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
 
-    return cx, is_split, left_cx, right_cx, debug
+    return cx, green_area, is_junction, debug
 
 # ══════════════════════════════════════════════════════
-# 프레임 전처리: YUYV → BGR 색공간 변환 + 180도 회전
+# 분기점 행동
 # ══════════════════════════════════════════════════════
-def process_frame(frame):
-    """캡처된 프레임에 색공간 변환(YUYV→BGR)과 180도 회전을 적용한다."""
-    if frame is None:
-        return frame
-    # picamera2가 YUYV 포맷(2채널)으로 캡처한 경우 BGR로 변환
-    # — 변환 전에는 손/피부가 파랗게 보이는 색상 오류가 발생함
-    if frame.ndim == 3 and frame.shape[2] == 2:
-        frame = cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_YUYV)
-    # 카메라가 거꾸로 장착되어 있으므로 상하좌우 180도 회전
-    frame = cv2.flip(frame, -1)
-    return frame
+def execute_junction(action, cfg):
+    print(f"[Junction] 행동: {action}")
 
+    # 분기점 표식 위를 지나칠 때까지 직진
+    go_forward(cfg["base_speed"])
+    time.sleep(cfg["forward_time"])
+    motor.motorStop()
+    time.sleep(0.1)
+
+    if action == "straight":
+        go_forward(cfg["base_speed"])
+        time.sleep(0.4)
+        return
+
+    elif action in ("left", "right"):
+        spin_fn = spin_left if action == "left" else spin_right
+
+        # 90도 고정 회전 (속도 30, 1.8초)
+        spin_fn(30)
+        time.sleep(1.8)
+        motor.motorStop()
+        time.sleep(0.1)
+
+        # 미세 조정: action 방향으로만 고정 회전 (lost_dir 무시)
+        fine_timeout = time.time() + 2.0
+        while time.time() < fine_timeout:
+            frame = cam.capture()
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            h, w  = frame.shape[:2]
+            roi_y = int(h * cfg["roi_top"])
+            roi   = frame[roi_y:h, :]
+            gray  = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            _, binary = cv2.threshold(gray, cfg["thresh"], 255, cv2.THRESH_BINARY_INV)
+            M = cv2.moments(binary)
+
+            if M['m00'] > 0:
+                cx = int(M['m10'] / M['m00'])
+                if abs(cx - w // 2) < 20:
+                    motor.motorStop()
+                    print(f"[Junction] {action} 완료")
+                    return
+
+            # lost_dir 무시하고 항상 action 방향으로만 회전
+            spin_fn(20)
+            time.sleep(0.03)
+
+        motor.motorStop()
+        print(f"[Junction] {action} 타임아웃")
 
 # ══════════════════════════════════════════════════════
 # 주행 루프
 # ══════════════════════════════════════════════════════
 def drive_loop():
-    global latest_raw, latest_debug
+    global latest_debug
 
-    CENTER_X       = 160   # 320px 기준 중앙
-    lost_dir       = 1
-    fps_t          = time.time()
-    fps_count      = 0
-
-    # PI 제어 변수
-    integral       = 0.0
-    prev_time      = time.time()
-
-    # 분기점 상태
-    junction_count = 0
-    junc_start     = None   # 분기점 첫 감지 시각
-    JUNC_CONFIRM   = 0.2    # 0.3초 이상 지속 시 분기점 확정
-    in_junction    = False  # 분기점 처리 중 여부
-
-    current_route  = "A"
+    CENTER_X          = 160
+    lost_dir          = 1
+    fps_t             = time.time()
+    fps_count         = 0
+    integral          = 0.0
+    prev_time         = time.time()
+    green_seen        = False
+    junction_cooldown = 0.0
+    current_route     = "A"
+    stopped           = False
 
     while True:
-        cfg   = copy.deepcopy(config)
-        # YUYV → BGR 색공간 변환 및 180도 회전 적용
-        frame = process_frame(cam.capture())
+        cfg = copy.deepcopy(config)
 
-        # imencode 전 채널 수(3) 검증 — 방어 코드
-        if frame is None or frame.ndim != 3 or frame.shape[2] not in (1, 3, 4):
-            time.sleep(0.03)
-            continue
+        frame = cam.capture()
+        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
-        _, raw_jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 65])
-        cx, is_split, left_cx, right_cx, debug_frame = detect_line(frame, cfg)
-        _, dbg_jpeg = cv2.imencode('.jpg', debug_frame, [cv2.IMWRITE_JPEG_QUALITY, 65])
+        cx, green_area, is_junction, debug_frame = detect_line_and_green(frame, cfg)
+
+        encode_target = debug_frame if (debug_frame is not None and
+                                        len(debug_frame.shape) == 3 and
+                                        debug_frame.shape[2] == 3) else frame
+        if encode_target is not None:
+            _, dbg_jpeg = cv2.imencode('.jpg', encode_target, [cv2.IMWRITE_JPEG_QUALITY, 65])
+            with lock:
+                latest_debug = dbg_jpeg.tobytes()
 
         with lock:
-            latest_raw   = raw_jpeg.tobytes()
-            latest_debug = dbg_jpeg.tobytes()
             current_route = cfg["route"]
 
         fps_count += 1
@@ -241,98 +267,50 @@ def drive_loop():
             fps_t = time.time()
 
         if not cfg["running"]:
-            motor.stop()
+            if not stopped:
+                motor.motorStop()
+                stopped = True
             integral = 0.0
             with lock:
-                state["action"] = "정지"
-                state["cx"]     = cx
+                state["action"]         = "정지"
+                state["cx"]             = cx
+                state["green_area"]     = green_area
+                state["junction_count"] = get_junction_count()
             time.sleep(0.05)
             continue
+        else:
+            stopped = False
 
-        # 시간 간격
-        now      = time.time()
-        dt       = now - prev_time
+        now       = time.time()
+        dt        = now - prev_time
         prev_time = now
         if dt > 0.1:
             dt = 0.033
 
+        # 분기점 처리
+        if is_junction and not green_seen and now > junction_cooldown:
+            green_seen        = True
+            junction_cooldown = now + 3.0
+            junction_count    = increment_junction()
+            integral          = 0.0
+
+            action_at_junc = ROUTES[current_route].get(junction_count, "straight")
+            print(f"\n[Junction] #{junction_count} | 루트 {current_route} | 행동: {action_at_junc}")
+
+            with lock:
+                state["junction_count"] = junction_count
+                state["action"]         = f"분기점#{junction_count} {action_at_junc}"
+
+            execute_junction(action_at_junc, cfg)
+            continue
+
+        if not is_junction:
+            green_seen = False
+
+        # 라인 추종 (PI 제어)
         correction = 0
         action     = "직진"
 
-        # ── 분기점 감지 ───────────────────────────────
-        if is_split and not in_junction:
-            if junc_start is None:
-                junc_start = time.time()
-            elif time.time() - junc_start >= JUNC_CONFIRM:
-                # 분기점 확정
-                junction_count += 1
-                in_junction     = True
-                junc_start      = None
-                integral        = 0.0   # 적분 리셋
-
-                action_at_junc = ROUTES[current_route].get(junction_count, "straight")
-                print(f"[Junction] #{junction_count} | 루트 {current_route} | 행동: {action_at_junc}")
-
-                with lock:
-                    state["junction_count"] = junction_count
-                    state["action"]         = f"분기점#{junction_count} {action_at_junc}"
-
-                # 행동 실행
-                if action_at_junc == "straight":
-                    go_forward(cfg["base_speed"])
-                    time.sleep(0.4)
-
-                elif action_at_junc == "left" and left_cx is not None:
-                    # 왼쪽 덩어리 중심 따라가기
-                    err = left_cx - CENTER_X
-                    while True:
-                        # 분기점 추종 중에도 색공간 변환 및 회전 적용
-                        frame2 = process_frame(cam.capture())
-                        cx2, is_split2, lx2, rx2, _ = detect_line(frame2, cfg)
-                        if not is_split2:
-                            in_junction = False
-                            break
-                        if lx2 is not None:
-                            err2 = lx2 - CENTER_X
-                            if abs(err2) < cfg["dead_zone"]:
-                                go_forward(cfg["base_speed"])
-                            elif err2 > 0:
-                                turn_right(cfg["base_speed"],
-                                           max(cfg["base_speed"] - int(abs(err2)*cfg["kp"]), cfg["turn_speed"]))
-                            else:
-                                turn_left(max(cfg["base_speed"] - int(abs(err2)*cfg["kp"]), cfg["turn_speed"]),
-                                          cfg["base_speed"])
-                        time.sleep(0.03)
-
-                elif action_at_junc == "right" and right_cx is not None:
-                    # 오른쪽 덩어리 중심 따라가기
-                    while True:
-                        # 분기점 추종 중에도 색공간 변환 및 회전 적용
-                        frame2 = process_frame(cam.capture())
-                        cx2, is_split2, lx2, rx2, _ = detect_line(frame2, cfg)
-                        if not is_split2:
-                            in_junction = False
-                            break
-                        if rx2 is not None:
-                            err2 = rx2 - CENTER_X
-                            if abs(err2) < cfg["dead_zone"]:
-                                go_forward(cfg["base_speed"])
-                            elif err2 > 0:
-                                turn_right(cfg["base_speed"],
-                                           max(cfg["base_speed"] - int(abs(err2)*cfg["kp"]), cfg["turn_speed"]))
-                            else:
-                                turn_left(max(cfg["base_speed"] - int(abs(err2)*cfg["kp"]), cfg["turn_speed"]),
-                                          cfg["base_speed"])
-                        time.sleep(0.03)
-
-                in_junction = False
-                continue
-
-        elif not is_split:
-            junc_start  = None
-            in_junction = False
-
-        # ── 라인 추종 (PI 제어) ───────────────────────
         if cx is None:
             integral = 0.0
             action   = f"탐색({'우' if lost_dir > 0 else '좌'})"
@@ -343,45 +321,39 @@ def drive_loop():
         else:
             error     = cx - CENTER_X
             integral += error * dt
-            # 적분 와인드업 방지
             integral  = max(min(integral, 200), -200)
 
-            p_term     = error    * cfg["kp"]
-            i_term     = integral * cfg["ki"]
-            correction = int(p_term + i_term)
+            correction = int(error * cfg["kp"] + integral * cfg["ki"])
             correction = max(min(correction, cfg["base_speed"] - 10), -(cfg["base_speed"] - 10))
 
-            if error > 0:
-                lost_dir = 1
-            elif error < 0:
-                lost_dir = -1
+            lost_dir = 1 if error > 0 else (-1 if error < 0 else lost_dir)
 
             if abs(error) < cfg["dead_zone"]:
                 go_forward(cfg["base_speed"])
                 action = "직진"
             elif correction > 0:
-                # 오른쪽으로 치우침 → 우회전
                 right_speed = max(cfg["base_speed"] - abs(correction), cfg["turn_speed"])
                 turn_right(cfg["base_speed"], right_speed)
                 action = f"우회전 ({abs(correction)})"
             else:
-                # 왼쪽으로 치우침 → 좌회전
                 left_speed = max(cfg["base_speed"] - abs(correction), cfg["turn_speed"])
                 turn_left(left_speed, cfg["base_speed"])
                 action = f"좌회전 ({abs(correction)})"
 
         with lock:
-            state["cx"]         = cx
-            state["error"]      = cx - CENTER_X if cx else 0
-            state["correction"] = abs(correction)
-            state["action"]     = action
-            state["lost"]       = cx is None
-            state["route"]      = current_route
+            state["cx"]             = cx
+            state["error"]          = cx - CENTER_X if cx else 0
+            state["correction"]     = abs(correction)
+            state["action"]         = action
+            state["lost"]           = cx is None
+            state["route"]          = current_route
+            state["green_area"]     = green_area
+            state["junction_count"] = get_junction_count()
 
         time.sleep(0.03)
 
 # ══════════════════════════════════════════════════════
-# Flask 라우트
+# Flask
 # ══════════════════════════════════════════════════════
 def gen_stream(get_fn):
     while True:
@@ -391,18 +363,8 @@ def gen_stream(get_fn):
             yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
         time.sleep(0.033)
 
-@app.route('/raw_feed')
-def raw_feed():
-    return Response(gen_stream(lambda: latest_raw),
-                    mimetype='multipart/x-mixed-replace; boundary=frame')
-
 @app.route('/debug_feed')
 def debug_feed():
-    return Response(gen_stream(lambda: latest_debug),
-                    mimetype='multipart/x-mixed-replace; boundary=frame')
-
-@app.route('/video_feed')
-def video_feed():
     return Response(gen_stream(lambda: latest_debug),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
@@ -429,26 +391,18 @@ def start():
 @app.route('/stop', methods=['POST'])
 def stop():
     config['running'] = False
-    motor.stop()
+    motor.motorStop()
+    reset_junction()
+    with lock:
+        state["junction_count"] = 0
     return jsonify({'status': 'stopped'})
 
-@app.route('/control', methods=['POST'])
-def control():
-    """방향키 수동 제어 엔드포인트 — keydown/keyup 이벤트에서 호출"""
-    data = request.get_json(force=True)
-    direction = str(data.get('direction', 'stop'))
-    speed = int(data.get('speed', 40))
-    if direction == 'forward':
-        motor.forward(speed)
-    elif direction == 'backward':
-        motor.backward(speed)
-    elif direction == 'left':
-        motor.rotate_left(speed)
-    elif direction == 'right':
-        motor.rotate_right(speed)
-    else:
-        motor.stop()
-    return jsonify({'ok': True})
+@app.route('/reset', methods=['POST'])
+def reset():
+    reset_junction()
+    with lock:
+        state["junction_count"] = 0
+    return jsonify({'status': 'ok'})
 
 @app.route('/')
 def index():
@@ -469,12 +423,9 @@ HTML = '''<!DOCTYPE html>
            align-items: center; justify-content: space-between; }
   header h1 { font-size: 1rem; color: #4ade80; letter-spacing: 2px; }
   .fps { color: #666; font-size: 0.8rem; }
-  .layout { display: grid; grid-template-columns: 1fr 1fr;
-            gap: 12px; padding: 12px; }
-  .card { background: #18181f; border: 1px solid #2a2a3a;
-          border-radius: 8px; padding: 14px; }
-  .card h2 { font-size: 0.75rem; color: #666;
-             letter-spacing: 2px; margin-bottom: 10px; }
+  .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px; }
+  .card { background: #18181f; border: 1px solid #2a2a3a; border-radius: 8px; padding: 14px; }
+  .card h2 { font-size: 0.75rem; color: #666; letter-spacing: 2px; margin-bottom: 10px; }
   img.feed { width: 100%; border-radius: 4px; background: #000; display: block; }
   .status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .stat { background: #0f0f13; border-radius: 6px; padding: 10px; }
@@ -484,25 +435,24 @@ HTML = '''<!DOCTYPE html>
   .stat .value.danger { color: #f87171; }
   .error-bar-bg { background: #0f0f13; border-radius: 4px;
                   height: 16px; position: relative; overflow: hidden; margin-top: 8px; }
-  .error-bar-center { position: absolute; left: 50%; top: 0;
-                      width: 2px; height: 100%; background: #333; }
-  .error-bar-fill { position: absolute; top: 0; height: 100%;
-                    transition: all 0.1s; }
-  /* 경로 선택 버튼 */
+  .error-bar-center { position: absolute; left: 50%; top: 0; width: 2px; height: 100%; background: #333; }
+  .error-bar-fill { position: absolute; top: 0; height: 100%; transition: all 0.1s; }
   .route-row { display: flex; gap: 8px; margin-bottom: 12px; }
   .btn-route { flex: 1; padding: 12px; border: 2px solid #2a2a3a;
                background: #0f0f13; color: #666; border-radius: 6px;
                cursor: pointer; font-family: inherit; font-size: 0.9rem;
                font-weight: bold; letter-spacing: 1px; transition: all 0.15s; }
   .btn-route.active { border-color: #4ade80; color: #4ade80; background: #0f2010; }
-  .btn-route:hover  { border-color: #4ade80; color: #4ade80; }
   .btn-row { display: flex; gap: 10px; margin-bottom: 12px; }
   .btn-start { flex:1; padding: 12px; border: none; border-radius: 6px;
-               cursor: pointer; font-family: inherit; font-size: 0.85rem;
-               background: #4ade80; color: #000; letter-spacing: 1px; }
+               cursor: pointer; background: #4ade80; color: #000;
+               font-family: inherit; font-size: 0.85rem; }
   .btn-stop  { flex:1; padding: 12px; border: none; border-radius: 6px;
-               cursor: pointer; font-family: inherit; font-size: 0.85rem;
-               background: #f87171; color: #000; letter-spacing: 1px; }
+               cursor: pointer; background: #f87171; color: #000;
+               font-family: inherit; font-size: 0.85rem; }
+  .btn-reset { padding: 8px 16px; border: 1px solid #444; background: #1a1a22;
+               color: #888; border-radius: 6px; cursor: pointer;
+               font-family: inherit; font-size: 0.75rem; }
   .sliders { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
   .slider-item label { font-size: 0.7rem; color: #666; display: block; margin-bottom: 4px; }
   .slider-item input { width: 100%; accent-color: #4ade80; }
@@ -510,37 +460,28 @@ HTML = '''<!DOCTYPE html>
   .controls { grid-column: 1 / -1; }
   .junction-badge { display: inline-block; background: #0f2030;
                     border: 1px solid #0af; border-radius: 4px;
-                    padding: 2px 8px; font-size: 0.75rem; color: #0af;
-                    margin-left: 8px; }
+                    padding: 2px 8px; font-size: 0.75rem; color: #0af; margin-left: 8px; }
+  .green-section { border-top: 1px solid #2a2a3a; padding-top: 12px; margin-top: 12px; }
 </style>
 </head>
 <body>
 <header>
-  <h1>▶ LINE FOLLOW DASHBOARD</h1>
+  <h1>▶ LINE FOLLOW DASHBOARD (GREEN MARKER)</h1>
   <span class="fps" id="fps">-- fps</span>
 </header>
 <div class="layout">
   <div class="card" style="grid-column: 1 / -1;">
-    <h2>CAMERA VIEW</h2>
+    <h2>CAMERA VIEW (CSI)</h2>
     <div style="max-width:640px;margin:0 auto;">
-      <img class="feed" src="/video_feed">
+      <img class="feed" src="/debug_feed">
     </div>
   </div>
   <div class="card">
     <h2>STATUS</h2>
     <div class="status-grid">
-      <div class="stat">
-        <div class="label">ACTION</div>
-        <div class="value" id="action">--</div>
-      </div>
-      <div class="stat">
-        <div class="label">ERROR (px)</div>
-        <div class="value" id="error">--</div>
-      </div>
-      <div class="stat">
-        <div class="label">LINE CX</div>
-        <div class="value" id="cx">--</div>
-      </div>
+      <div class="stat"><div class="label">ACTION</div><div class="value" id="action">--</div></div>
+      <div class="stat"><div class="label">ERROR (px)</div><div class="value" id="error">--</div></div>
+      <div class="stat"><div class="label">GREEN AREA</div><div class="value" id="green">--</div></div>
       <div class="stat">
         <div class="label">분기점 <span class="junction-badge" id="junc">0</span></div>
         <div class="value" id="route-state">--</div>
@@ -553,8 +494,6 @@ HTML = '''<!DOCTYPE html>
   </div>
   <div class="card controls">
     <h2>CONTROL</h2>
-
-    <!-- 경로 선택 -->
     <div style="font-size:0.7rem;color:#666;margin-bottom:6px">경로 선택</div>
     <div class="route-row">
       <button class="btn-route active" id="btn-A" onclick="selectRoute('A')">
@@ -567,14 +506,11 @@ HTML = '''<!DOCTYPE html>
         C<br><span style="font-size:0.65rem;font-weight:normal">1좌→2직→3우→4우→5직</span>
       </button>
     </div>
-
-    <!-- 주행 버튼 -->
     <div class="btn-row">
       <button class="btn-start" onclick="startDrive()">▶ 주행 시작</button>
       <button class="btn-stop"  onclick="stopDrive()">■ 정지</button>
+      <button class="btn-reset" onclick="resetJunc()">분기점 리셋</button>
     </div>
-
-    <!-- 슬라이더 -->
     <div class="sliders">
       <div class="slider-item">
         <label>BASE_SPEED <span id="v-base">35</span></label>
@@ -587,13 +523,8 @@ HTML = '''<!DOCTYPE html>
                oninput="updateVal('v-thresh',this.value);sendConfig('thresh',+this.value)">
       </div>
       <div class="slider-item">
-        <label>ROI_TOP <span id="v-roi">0.6</span></label>
-        <input type="range" min="30" max="90" value="60"
-               oninput="updateVal('v-roi',(this.value/100).toFixed(2));sendConfig('roi_top',this.value/100)">
-      </div>
-      <div class="slider-item">
-        <label>KP <span id="v-kp">0.20</span></label>
-        <input type="range" min="1" max="80" value="20"
+        <label>KP <span id="v-kp">0.70</span></label>
+        <input type="range" min="1" max="80" value="70"
                oninput="updateVal('v-kp',(this.value/100).toFixed(2));sendConfig('kp',this.value/100)">
       </div>
       <div class="slider-item">
@@ -606,6 +537,51 @@ HTML = '''<!DOCTYPE html>
         <input type="range" min="0" max="80" value="15"
                oninput="updateVal('v-dz',this.value);sendConfig('dead_zone',+this.value)">
       </div>
+      <div class="slider-item">
+        <label>ROI_TOP <span id="v-roi">0.65</span></label>
+        <input type="range" min="30" max="90" value="65"
+               oninput="updateVal('v-roi',(this.value/100).toFixed(2));sendConfig('roi_top',this.value/100)">
+      </div>
+      <div class="slider-item">
+        <label>FORWARD_TIME <span id="v-fwd">1.5</span>s</label>
+        <input type="range" min="1" max="30" value="15"
+               oninput="updateVal('v-fwd',(this.value/10).toFixed(1));sendConfig('forward_time',this.value/10)">
+      </div>
+      <div class="slider-item">
+        <label>SPIN_SPEED <span id="v-spin">25</span></label>
+        <input type="range" min="10" max="60" value="25"
+               oninput="updateVal('v-spin',this.value);sendConfig('spin_speed',+this.value)">
+      </div>
+    </div>
+    <div class="green-section">
+      <div style="font-size:0.7rem;color:#666;margin-bottom:6px">초록 분기점 인식 설정</div>
+      <div class="sliders">
+        <div class="slider-item">
+          <label>H_MIN <span id="v-hmin">30</span></label>
+          <input type="range" min="20" max="60" value="30"
+                 oninput="updateVal('v-hmin',this.value);sendConfig('green_h_min',+this.value)">
+        </div>
+        <div class="slider-item">
+          <label>H_MAX <span id="v-hmax">85</span></label>
+          <input type="range" min="60" max="100" value="85"
+                 oninput="updateVal('v-hmax',this.value);sendConfig('green_h_max',+this.value)">
+        </div>
+        <div class="slider-item">
+          <label>S_MIN <span id="v-smin">80</span></label>
+          <input type="range" min="30" max="200" value="80"
+                 oninput="updateVal('v-smin',this.value);sendConfig('green_s_min',+this.value)">
+        </div>
+        <div class="slider-item">
+          <label>V_MIN <span id="v-vmin">50</span></label>
+          <input type="range" min="30" max="200" value="50"
+                 oninput="updateVal('v-vmin',this.value);sendConfig('green_v_min',+this.value)">
+        </div>
+        <div class="slider-item">
+          <label>MIN_AREA <span id="v-area">200</span></label>
+          <input type="range" min="50" max="2000" value="200"
+                 oninput="updateVal('v-area',this.value);sendConfig('green_min_area',+this.value)">
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -613,80 +589,35 @@ HTML = '''<!DOCTYPE html>
 function updateVal(id, val) { document.getElementById(id).textContent = val; }
 function startDrive() { fetch('/start', {method:'POST'}); }
 function stopDrive()  { fetch('/stop',  {method:'POST'}); }
-
+function resetJunc()  { fetch('/reset', {method:'POST'}); }
 function selectRoute(r) {
   ['A','B','C'].forEach(x => {
     document.getElementById('btn-'+x).classList.toggle('active', x === r);
   });
   sendConfig('route', r);
 }
-
 function sendConfig(key, value) {
   fetch('/config', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({[key]: value})});
 }
-
 function updateState() {
   fetch('/state').then(r=>r.json()).then(d=>{
     document.getElementById('fps').textContent    = (d.fps||'--')+' fps';
     document.getElementById('action').textContent = d.action||'--';
-    document.getElementById('cx').textContent     = d.cx !== null ? d.cx : '--';
+    document.getElementById('green').textContent  = (d.green_area||0)+' px';
     document.getElementById('junc').textContent   = d.junction_count || 0;
     document.getElementById('route-state').textContent = '루트 ' + (d.route||'--');
-
     const err = d.error || 0;
     const errEl = document.getElementById('error');
     errEl.textContent = (err > 0 ? '+' : '') + err;
     errEl.className = 'value' + (Math.abs(err) > 60 ? ' danger' : Math.abs(err) > 20 ? ' warn' : '');
-
     const pct = Math.min(Math.abs(err) / 160 * 50, 50);
     const bar = document.getElementById('error-bar');
-    if (err > 0) {
-      bar.style.left = '50%'; bar.style.width = pct+'%';
-      bar.style.background = '#f59e0b';
-    } else {
-      bar.style.left = (50-pct)+'%'; bar.style.width = pct+'%';
-      bar.style.background = '#4ade80';
-    }
+    if (err > 0) { bar.style.left='50%'; bar.style.width=pct+'%'; bar.style.background='#f59e0b'; }
+    else { bar.style.left=(50-pct)+'%'; bar.style.width=pct+'%'; bar.style.background='#4ade80'; }
   }).catch(()=>{});
 }
 setInterval(updateState, 150);
-
-// ── 방향키 수동 제어 (W/A/S/D 미사용) ───────────────────────────────
-// keydown → /control POST → motor.forward/backward/rotate_left/rotate_right
-// keyup   → /control POST stop (키를 떼면 정지)
-const KEY_MAP = {
-  'ArrowUp':    'forward',
-  'ArrowDown':  'backward',
-  'ArrowLeft':  'left',
-  'ArrowRight': 'right',
-  ' ':          'stop',
-};
-const _held = new Set();  // 키 누름 중복 억제용 집합
-
-function sendControl(direction, speed) {
-  fetch('/control', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({direction: direction, speed: speed})
-  });
-}
-
-document.addEventListener('keydown', function(e) {
-  const dir = KEY_MAP[e.key];
-  if (!dir) return;
-  e.preventDefault();            // 방향키 페이지 스크롤 방지
-  if (_held.has(e.key)) return;  // 키 누름 유지 시 연속 이벤트 억제
-  _held.add(e.key);
-  sendControl(dir, 40);
-});
-
-document.addEventListener('keyup', function(e) {
-  if (!KEY_MAP[e.key]) return;
-  e.preventDefault();
-  _held.delete(e.key);
-  sendControl('stop', 0);        // 키를 떼면 즉시 정지
-});
 </script>
 </body>
 </html>'''
