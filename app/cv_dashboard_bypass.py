@@ -16,12 +16,27 @@ from sensors.motor  import MotorController
 
 app   = Flask(__name__)
 cam   = Camera(width=320, height=240)
+try:
+    from sensors.mpu6050 import MPU6050
+    imu = MPU6050()
+    time.sleep(0.5)
+    _baseline = imu.get_accel()
+    IMU_AVAILABLE = True
+    print(f"[IMU] 기준값: x={_baseline['x']:.3f}")
+except Exception as e:
+    imu = None
+    _baseline = {'x': 0.0}
+    IMU_AVAILABLE = False
+    print(f"[IMU] SKIP: {e}")
 motor = MotorController()
 
 ROUTES = {
-    "A": {1:"straight", 2: "stop"},
-    "B": {1: "left",  2: "right", 3: "right", 4:"stop"},
-    "C": {1: "left",  2: "straight", 3: "right", 4: "right", 5: "straight",6:"stop"},
+    "A":   {1: "straight", 2: "stop"},
+    "B":   {1: "left",  2: "right", 3: "right", 4: "stop"},
+    "C":   {1: "left",  2: "straight", 3: "right", 4: "right", 5: "straight", 6: "stop"},
+    "A→B": {1: "left", 2: "right", 3: "right", 4: "stop"},
+    "A→C": {1: "left", 2: "straight", 3: "right", 4: "right", 5: "straight", 6: "stop"},
+    "B→C": {1: "left", 2: "right", 3: "right", 4: "straight", 5: "stop"},
 }
 
 config = {
@@ -29,7 +44,7 @@ config = {
     "turn_speed":     30,
     "spin_speed":     25,
     "thresh":         43,
-    "roi_top":        0.65,
+    "roi_top":        0.7,
     "dead_zone":      15,
     "kp":             0.8,
     "ki":             0.002,
@@ -41,6 +56,7 @@ config = {
     "green_v_min":    50,
     "green_min_area": 200,
     "forward_time":   0.5,
+    "slope_speed": 50
 }
 
 lock  = threading.Lock()
@@ -104,6 +120,50 @@ def spin_right(speed):
     motor.set_motor(3,  1, speed)
     motor.set_motor(2, -1, speed)
     motor.set_motor(1, -1, speed)
+
+def do_reroute(new_route: str):
+    print(f"[Reroute] 우회 시작 → {new_route}")
+    motor.motorStop()
+    time.sleep(0.3)
+
+    # 초록 분기점 보일 때까지 후진
+    timeout = time.time() + 10.0  # 최대 10초
+    while time.time() < timeout:
+        frame = cam.capture()
+        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        h, w  = frame.shape[:2]
+        roi_y = int(config["roi_top"] * h)
+        roi   = frame[roi_y:h, :]
+        roi_hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        lower = np.array([config["green_h_min"], config["green_s_min"], config["green_v_min"]])
+        upper = np.array([config["green_h_max"], 255, 255])
+        green_mask = cv2.inRange(roi_hsv, lower, upper)
+        green_area = int(np.sum(green_mask > 0))
+
+        if green_area > config["green_min_area"]:
+            motor.motorStop()
+            print("[Reroute] 초록 분기점 발견 — 정지")
+            break
+
+        # 후진
+        motor.set_motor(1, -1, config["base_speed"])
+        motor.set_motor(2, -1, config["base_speed"])
+        motor.set_motor(3, -1, config["base_speed"])
+        motor.set_motor(4, -1, config["base_speed"])
+        time.sleep(0.03)
+
+    motor.motorStop()
+    time.sleep(0.5)
+
+    # 경로 변경 + 카운트 리셋
+    reset_junction()
+    config['route']   = new_route
+    config['running'] = True
+    with lock:
+        state["junction_count"] = 0
+        state["route"]          = new_route
+        state["action"]         = f"우회→{new_route}"
+    print(f"[Reroute] {new_route} 로 재출발")
 
 # ══════════════════════════════════════════════════════
 # 라인 + 초록 감지
@@ -185,7 +245,7 @@ def execute_junction(action, cfg):
 
     if action == "stop":
         go_forward(cfg["base_speed"])
-        time.sleep(1.5)
+        time.sleep(0.2)
         motor.motorStop()
         config['running'] = False
         print("[Junction] 목적지 도착 — 정지")
@@ -345,10 +405,22 @@ def drive_loop():
             green_seen = False
 
         # 라인 추종 (PI 제어)
+        # 라인 추종 (PI 제어)
         correction = 0
         action     = "직진"
 
-        if cx is None:
+        # 경사 감지
+        on_slope = False
+        if IMU_AVAILABLE:
+            accel    = imu.get_accel()
+            tilt     = abs(accel['x'] - _baseline['x'])
+            on_slope = tilt > 0.15
+
+        if on_slope:
+            spd = cfg["slope_speed"] if current_route == "A" else cfg["base_speed"]
+            go_forward(spd)
+            action = "경사직진"
+        elif cx is None:
             integral = 0.0
             action   = f"탐색({'우' if lost_dir > 0 else '좌'})"
             if lost_dir > 0:
@@ -440,6 +512,17 @@ def reset():
     with lock:
         state["junction_count"] = 0
     return jsonify({'status': 'ok'})
+
+@app.route('/reroute', methods=['POST'])
+def reroute():
+    data      = request.get_json(force=True)
+    new_route = str(data.get('route', 'A→B'))
+    if new_route not in ROUTES:
+        return jsonify({'status': 'error', 'msg': f'Invalid route: {new_route}'})
+    threading.Thread(
+        target=do_reroute, args=(new_route,), daemon=True, name="reroute"
+    ).start()
+    return jsonify({'status': 'ok', 'rerouting_to': new_route})
 
 @app.route('/')
 def index():
@@ -544,9 +627,14 @@ HTML = '''<!DOCTYPE html>
       </button>
     </div>
     <div class="btn-row">
-      <button class="btn-start" onclick="startDrive()">▶ 주행 시작</button>
-      <button class="btn-stop"  onclick="stopDrive()">■ 정지</button>
-      <button class="btn-reset" onclick="resetJunc()">분기점 리셋</button>
+        <button class="btn-start" onclick="startDrive()">▶ 주행 시작</button>
+        <button class="btn-stop"  onclick="stopDrive()">■ 정지</button>
+        <button class="btn-reset" onclick="resetJunc()">분기점 리셋</button>
+    </div>
+    <div class="btn-row">
+        <button class="btn-reset" onclick="reroute('A→B')" style="flex:1;background:#1a1a22;border:1px solid #f59e0b;color:#f59e0b;">A→B 우회</button>
+        <button class="btn-reset" onclick="reroute('A→C')" style="flex:1;background:#1a1a22;border:1px solid #f59e0b;color:#f59e0b;">A→C 우회</button>
+        <button class="btn-reset" onclick="reroute('B→C')" style="flex:1;background:#1a1a22;border:1px solid #f59e0b;color:#f59e0b;">B→C 우회</button>
     </div>
     <div class="sliders">
       <div class="slider-item">
@@ -627,6 +715,13 @@ function updateVal(id, val) { document.getElementById(id).textContent = val; }
 function startDrive() { fetch('/start', {method:'POST'}); }
 function stopDrive()  { fetch('/stop',  {method:'POST'}); }
 function resetJunc()  { fetch('/reset', {method:'POST'}); }
+function reroute(r) {
+  fetch('/reroute', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({route: r})
+  });
+}
 function selectRoute(r) {
   ['A','B','C'].forEach(x => {
     document.getElementById('btn-'+x).classList.toggle('active', x === r);

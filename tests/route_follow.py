@@ -1,5 +1,5 @@
 # python tests/route_follow.py
-# 라인트래킹 + 자이로 기반 경로 선택 주행
+# 라인트래킹 기반 경로 선택 주행 (자이로 없음)
 #
 # 트랙 구조:
 #   START → 1 → (루트 선택) → 6 GOAL
@@ -7,15 +7,12 @@
 # 루트 A: 모든 분기점 직진 (1→6)
 # 루트 B: 1(좌) → 2(우) → 5(우)
 # 루트 C: 1(좌) → 2(직) → 3(우) → 4(우) → 5(직)
-#
-# 실행: python tests/test_route_follow.py
 
 import sys, os, time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from sensors.tracker import LineTracker
 from sensors.motor   import MotorController
-from sensors.mpu6050 import MPU6050
 from sensors.ultra   import get_distance
 
 # ══════════════════════════════════════════════════════
@@ -37,26 +34,18 @@ def get_next_route(current):
 # ══════════════════════════════════════════════════════
 BASE_SPEED      = 35
 TURN_SPEED      = 25
-SPIN_SPEED      = 35
+SPIN_SPEED      = 30   # 회전 속도 (너무 빠르면 선 지나침 → 낮추기)
 SEARCH_SPEED    = 20
+LOST_SPEED      = 20
 OBSTACLE_CM     = 1
 LOOP_HZ         = 50
-LCR_CONFIRM_SEC = 0.15   # LCR 유지 시간 → 분기점 확정
-TURN_TARGET_DEG = 40     # 자이로 회전 목표 각도
-GYRO_DT         = 0.01
+LCR_CONFIRM_SEC = 0.15
 
 # ══════════════════════════════════════════════════════
 # 센서 / 모터 초기화
 # ══════════════════════════════════════════════════════
 tracker = LineTracker()
 motor   = MotorController()
-imu     = MPU6050()
-
-print("[Init] 자이로 캘리브레이션 중... (로봇 고정)")
-time.sleep(1)
-from tests.calibration_gyro import calibrate_gyro
-imu.gyro_offset = calibrate_gyro(imu)
-print("[Init] 캘리브레이션 완료")
 
 # ══════════════════════════════════════════════════════
 # 모터 기본 동작
@@ -74,80 +63,75 @@ def spin_right(speed=SPIN_SPEED):
     motor.set_motor(1, -1, speed)
 
 # ══════════════════════════════════════════════════════
-# 자이로 기반 각도 회전
+# 라인 센서 기반 회전
 # ══════════════════════════════════════════════════════
-def turn_by_angle(direction, target_deg=TURN_TARGET_DEG):
-    print(f"[Turn] {direction} {target_deg}도 회전")
+def turn_until_line(direction):
+    """
+    라인 센서만으로 90도 회전.
+    1단계: 직진으로 교차점 벗어나기
+    2단계: 중앙 센서 선 사라질 때까지 회전
+    3단계: 중앙 센서 선 다시 잡힐 때까지 회전
+    """
+    print(f"\n[Turn] {direction} 회전 시작")
 
     # 1단계: 교차점 벗어나기
     motor.forward(BASE_SPEED)
-    time.sleep(0.25)
+    time.sleep(0.3)
     motor.stop()
     time.sleep(0.1)
 
-    # 2단계: 자이로로 목표 각도까지
-    angle  = 0.0
-    t_prev = time.time()
-
-    while angle < target_deg:
-        t_now  = time.time()
-        dt     = t_now - t_prev
-        t_prev = t_now
-
-        gyro   = imu.get_gyro()
-        angle += abs(gyro['z']) * dt
-
+    # 2단계: 현재 선 벗어나기
+    print(f"[Turn] 현재 선 벗어나는 중...")
+    timeout = time.time() + 3.0
+    while time.time() < timeout:
+        state = tracker.read()
+        if not state['center']:
+            break
         if direction == "left":
             spin_left(SPIN_SPEED)
         else:
             spin_right(SPIN_SPEED)
-
-        time.sleep(GYRO_DT)
-
+        time.sleep(0.02)
     motor.stop()
-    time.sleep(0.1)
-    print(f"[Turn] {angle:.1f}도 완료 → 라인 탐색")
+    time.sleep(0.05)
 
-    # 3단계: 중앙 센서가 선 잡힐 때까지 천천히
-    timeout = time.time() + 2.0
+    # 3단계: 새 선 탐색
+    print(f"[Turn] 새 선 탐색 중...")
+    timeout = time.time() + 3.0
     while time.time() < timeout:
         state = tracker.read()
         if state['center']:
             motor.stop()
             time.sleep(0.1)
-            print("[Turn] 라인 정렬 완료")
+            print(f"[Turn] ✓ 완료!")
             return True
         if direction == "left":
-            spin_left(SEARCH_SPEED)
+            spin_left(SPIN_SPEED)
         else:
-            spin_right(SEARCH_SPEED)
+            spin_right(SPIN_SPEED)
         time.sleep(0.02)
 
     motor.stop()
-    print("[Turn] 경고: 라인 정렬 실패")
+    print(f"[Turn] ✗ 선 못 찾음 — SPIN_SPEED 조정 필요")
     return False
 
 def turn_180():
+    """180도 회전 후 라인 탐색"""
     print("[Turn] 180도 회전")
     motor.stop()
     time.sleep(0.3)
 
-    angle  = 0.0
-    t_prev = time.time()
-
-    while angle < 170:
-        t_now  = time.time()
-        dt     = t_now - t_prev
-        t_prev = t_now
-        gyro   = imu.get_gyro()
-        angle += abs(gyro['z']) * dt
+    # 선 사라질 때까지 회전
+    timeout = time.time() + 5.0
+    while time.time() < timeout:
+        state = tracker.read()
+        if not state['center']:
+            break
         spin_right(SPIN_SPEED)
-        time.sleep(GYRO_DT)
+        time.sleep(0.02)
 
-    motor.stop()
-    time.sleep(0.2)
-
-    timeout = time.time() + 3.0
+    # 선 다시 잡힐 때까지 계속 회전
+    timeout = time.time() + 5.0
     while time.time() < timeout:
         state = tracker.read()
         if state['center']:
@@ -155,19 +139,16 @@ def turn_180():
             time.sleep(0.1)
             print("[Turn] 180도 완료")
             return
-        spin_right(SEARCH_SPEED)
+        spin_right(SPIN_SPEED)
         time.sleep(0.02)
 
     motor.stop()
+    print("[Turn] 180도 완료 (라인 미감지)")
 
 # ══════════════════════════════════════════════════════
-# 분기점 감지 (l, c, r 인자로 받음)
+# 분기점 감지
 # ══════════════════════════════════════════════════════
 def check_junction(l, c, r, lcr_start):
-    """
-    LCR 패턴이 LCR_CONFIRM_SEC 이상 유지되면 분기점 확정.
-    센서값을 인자로 받아서 중복 읽기 방지.
-    """
     if l and c and r:
         if lcr_start is None:
             lcr_start = time.time()
@@ -178,65 +159,46 @@ def check_junction(l, c, r, lcr_start):
     return False, lcr_start
 
 # ══════════════════════════════════════════════════════
-# 라인 추종 (l, c, r 인자로 받음)
+# 라인 추종
 # ══════════════════════════════════════════════════════
 def line_follow_step(l, c, r, lost_last_error, lost_count, searching):
-    """
-    센서값을 인자로 받아서 중복 읽기 방지.
-    """
-    # 선 감지 → 탐색 중이었으면 즉시 멈추고 재개
     if (l or c or r) and searching:
         motor.stop()
         time.sleep(0.05)
         searching  = False
         lost_count = 0
 
-    # 교차점은 check_junction에서 처리하므로 여기선 직진 유지
     if l and c and r:
         motor.forward(BASE_SPEED)
-
-    # 정중앙
     elif not l and c and not r:
         motor.forward(BASE_SPEED)
-
-    # 약간 왼쪽
     elif l and c and not r:
         lost_last_error = -1
         motor.set_motor(4, 1, TURN_SPEED)
         motor.set_motor(3, 1, TURN_SPEED)
         motor.set_motor(2, 1, BASE_SPEED)
         motor.set_motor(1, 1, BASE_SPEED)
-
-    # 약간 오른쪽
     elif not l and c and r:
         lost_last_error = 1
         motor.set_motor(4, 1, BASE_SPEED)
         motor.set_motor(3, 1, BASE_SPEED)
         motor.set_motor(2, 1, TURN_SPEED)
         motor.set_motor(1, 1, TURN_SPEED)
-
-    # 많이 왼쪽
     elif l and not c and not r:
         lost_last_error = -1
         spin_left()
-
-    # 많이 오른쪽
     elif not l and not c and r:
         lost_last_error = 1
         spin_right()
-
-    # 양끝만
     elif l and not c and r:
         motor.forward(BASE_SPEED)
-
-    # 선 이탈
     else:
         searching   = True
         lost_count += 1
         if lost_last_error == 1:
-            spin_right(SEARCH_SPEED)
+            spin_right(LOST_SPEED)
         else:
-            spin_left(SEARCH_SPEED)
+            spin_left(LOST_SPEED)
         if lost_count > LOOP_HZ * 2:
             lost_last_error *= -1
             lost_count       = 0
@@ -311,9 +273,9 @@ def run(route="A"):
                 motor.forward(BASE_SPEED)
                 time.sleep(0.3)
             elif action == "left":
-                turn_by_angle("left")
+                turn_until_line("left")
             elif action == "right":
-                turn_by_angle("right")
+                turn_until_line("right")
 
         else:
             # ── 라인 추종 ─────────────────────────────
@@ -321,7 +283,6 @@ def run(route="A"):
                 l, c, r, lost_last_error, lost_count, searching
             )
 
-        # 루프 주기 유지
         elapsed = time.time() - t0
         sleep_t = interval - elapsed
         if sleep_t > 0:
@@ -354,4 +315,3 @@ if __name__ == "__main__":
         motor.stop()
         motor.close()
         tracker.close()
-        imu.close()
