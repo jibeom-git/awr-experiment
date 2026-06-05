@@ -18,6 +18,11 @@ CSV_PATH     = DATA_DIR / "raw_experiment.csv"
 JSON_PATH    = DATA_DIR / "thresholds.json"
 REPORT_PATH  = DATA_DIR / "analysis_report.html"
 
+CSV_FIELDS = [
+    "timestamp", "label", "speed_cmd", "pitch", "weight",
+    "sonic", "accel_x", "accel_y", "accel_z", "pitch_delta", "result",
+]
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CSV 로드
@@ -29,7 +34,7 @@ def load_csv(path: Path) -> list:
         return []
     rows = []
     with open(path, newline="") as f:
-        for row in csv.DictReader(f):
+        for row in csv.DictReader(f, fieldnames=CSV_FIELDS):
             try:
                 rows.append({
                     "timestamp":   row.get("timestamp", ""),
@@ -42,7 +47,7 @@ def load_csv(path: Path) -> list:
                     "accel_y":     float(row.get("accel_y", 0) or 0),
                     "accel_z":     float(row.get("accel_z", 0) or 0),
                     "pitch_delta": float(row.get("pitch_delta", 0) or 0),
-                    "result":      row.get("result", "normal"),
+                    "result":      row.get("result", "normal").strip(),
                 })
             except ValueError:
                 continue
@@ -71,6 +76,15 @@ def _stats(vals: list) -> dict:
     }
 
 
+def _median(vals: list) -> float:
+    if not vals:
+        return 0.0
+    s = sorted(vals)
+    n = len(s)
+    mid = n // 2
+    return s[mid] if n % 2 else (s[mid - 1] + s[mid]) / 2.0
+
+
 def _filter(rows: list, result: str) -> list:
     return [r for r in rows if r["result"] == result]
 
@@ -90,15 +104,14 @@ def analyze_hill_fail(rows: list) -> dict:
     pd_stats  = _stats(pd_vals)
     spd_stats = _stats(spd_vals)
 
-    # 임계값 추천: pitch_delta 95퍼센타일 또는 mean+2std 중 더 작은 값 → 너무 민감하지 않게
-    pd_thr  = round(min(pd_stats["p95"], pd_stats["mean"] + 2 * pd_stats["std"]), 3)
-    spd_thr = round(spd_stats["mean"] - spd_stats["std"], 1)  # 실패 시 평균 속도 - 1σ
+    pd_thr  = round(pd_stats["p95"], 3)
+    spd_min = round(spd_stats["min"], 1)
 
     return {
         "pitch_delta_stats":      pd_stats,
         "speed_cmd_stats":        spd_stats,
-        "pitch_delta_threshold":  max(pd_thr, 0.5),   # 최소 0.5도 보장
-        "min_hill_speed":         max(spd_thr, 10),
+        "pitch_delta_threshold":  max(pd_thr, 0.5),
+        "min_hill_speed":         max(spd_min, 10),
     }
 
 
@@ -119,7 +132,7 @@ def analyze_slip(rows: list) -> dict:
         ratios.append(ratio)
 
     st  = _stats(ratios)
-    thr = round(st["mean"] + st["std"], 4)   # 슬립 시 비율 평균+1σ 이하 → 슬립 판정
+    thr = round(_median(ratios), 4)
 
     return {
         "slip_ratio_stats":             st,
@@ -138,11 +151,29 @@ def analyze_impact(rows: list) -> dict:
 
     az_vals = [abs(r["accel_z"]) for r in impacts]
     st      = _stats(az_vals)
-    thr     = round(st["mean"] - st["std"], 3)   # 충격 평균보다 낮은 값은 정상
+    thr     = round(st["p95"], 3)
 
     return {
         "accel_z_stats":       st,
         "impact_z_threshold":  round(max(thr, 9.81 + 1.0), 3),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. 서행 통과 패턴 분석 (cautious_pass)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def analyze_cautious_pass(rows: list) -> dict:
+    cautious = _filter(rows, "cautious_pass")
+    if not cautious:
+        return {"note": "cautious_pass 데이터 없음", "cautious_pass_speed_avg": 0.0}
+
+    spd_vals = [r["speed_cmd"] for r in cautious]
+    st = _stats(spd_vals)
+
+    return {
+        "speed_cmd_stats":        st,
+        "cautious_pass_speed_avg": st["mean"],
     }
 
 
@@ -171,27 +202,31 @@ def run_analysis():
         print(f"  {k:20s}: {v}행")
 
     # ── 분석 실행 ─────────────────────────────────────────────────────────────
-    hill  = analyze_hill_fail(rows)
-    slip  = analyze_slip(rows)
-    impact = analyze_impact(rows)
+    hill     = analyze_hill_fail(rows)
+    slip     = analyze_slip(rows)
+    impact   = analyze_impact(rows)
+    cautious = analyze_cautious_pass(rows)
 
     # ── 임계값 병합 (ai_core/config.py 에 사용될 값) ────────────────────────
     thresholds = {
-        "generated_at":              datetime.now().isoformat(),
-        "total_rows":                total,
-        "result_counts":             result_counts,
+        "generated_at":               datetime.now().isoformat(),
+        "total_rows":                 total,
+        "result_counts":              result_counts,
         # 등판 실패
-        "pitch_delta_threshold":     hill.get("pitch_delta_threshold", 3.0),
-        "min_hill_speed":            hill.get("min_hill_speed", 30),
+        "pitch_delta_threshold":      hill.get("pitch_delta_threshold", 3.0),
+        "min_hill_speed":             hill.get("min_hill_speed", 30),
         # 슬립
         "slip_accel_ratio_threshold": slip.get("slip_accel_ratio_threshold", 0.3),
         # 방지턱 충격
-        "impact_z_threshold":        impact.get("impact_z_threshold", 12.0),
+        "impact_z_threshold":         impact.get("impact_z_threshold", 12.0),
+        # 서행 통과
+        "cautious_pass_speed_avg":    cautious.get("cautious_pass_speed_avg", 0.0),
         # 상세 통계
         "_detail": {
-            "hill_fail": hill,
-            "slip":      slip,
-            "impact":    impact,
+            "hill_fail":     hill,
+            "slip":          slip,
+            "impact":        impact,
+            "cautious_pass": cautious,
         },
     }
 
@@ -209,6 +244,8 @@ def run_analysis():
     print(f"  slip_accel_ratio_threshold : {thresholds['slip_accel_ratio_threshold']}")
     print("\n── 방지턱 충격 임계값 ────────────────────────────────────")
     print(f"  impact_z_threshold : {thresholds['impact_z_threshold']}")
+    print("\n── 서행 통과 통계 ────────────────────────────────────────")
+    print(f"  cautious_pass_speed_avg : {thresholds['cautious_pass_speed_avg']}")
 
     # ── HTML 리포트 생성 ──────────────────────────────────────────────────────
     _write_html_report(thresholds, rows)
@@ -295,6 +332,11 @@ def _write_html_report(thr: dict, rows: list):
     <div class="key">impact_z_threshold (방지턱 충격)</div>
     <div class="val">{thr['impact_z_threshold']}</div>
     <div class="stat-row">{fmt_stats(detail.get('impact', {}).get('accel_z_stats'))}</div>
+  </div>
+  <div class="card">
+    <div class="key">cautious_pass_speed_avg (서행 통과 평균 속도)</div>
+    <div class="val">{thr['cautious_pass_speed_avg']}</div>
+    <div class="stat-row">{fmt_stats(detail.get('cautious_pass', {}).get('speed_cmd_stats'))}</div>
   </div>
 </div>
 

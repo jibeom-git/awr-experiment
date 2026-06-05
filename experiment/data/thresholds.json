@@ -1,0 +1,71 @@
+{
+  "generated_at": "2026-06-06T00:29:25.358233",
+  "total_rows": 21450,
+  "result_counts": {
+    "normal": 12107,
+    "hill_fail": 6170,
+    "cautious_pass": 1804,
+    "impact": 1291,
+    "slip": 78
+  },
+  "pitch_delta_threshold": 1.0,
+  "min_hill_speed": 10.0,
+  "slip_accel_ratio_threshold": 4.1175,
+  "impact_z_threshold": 10.81,
+  "cautious_pass_speed_avg": 50.7927,
+  "_detail": {
+    "hill_fail": {
+      "pitch_delta_stats": {
+        "count": 6170,
+        "mean": 0.2566,
+        "std": 0.348,
+        "min": 0.0,
+        "max": 2.9,
+        "p95": 1.0
+      },
+      "speed_cmd_stats": {
+        "count": 6170,
+        "mean": 38.6823,
+        "std": 21.0802,
+        "min": 10.0,
+        "max": 80.0,
+        "p95": 80.0
+      },
+      "pitch_delta_threshold": 1.0,
+      "min_hill_speed": 10.0
+    },
+    "slip": {
+      "slip_ratio_stats": {
+        "count": 78,
+        "mean": 3.9512,
+        "std": 2.4364,
+        "min": 0.0083,
+        "max": 8.4233,
+        "p95": 8.4233
+      },
+      "slip_accel_ratio_threshold": 4.1175
+    },
+    "impact": {
+      "accel_z_stats": {
+        "count": 1291,
+        "mean": 0.6155,
+        "std": 1.9969,
+        "min": 0.0,
+        "max": 18.474,
+        "p95": 2.989
+      },
+      "impact_z_threshold": 10.81
+    },
+    "cautious_pass": {
+      "speed_cmd_stats": {
+        "count": 1804,
+        "mean": 50.7927,
+        "std": 12.3054,
+        "min": 20.0,
+        "max": 80.0,
+        "p95": 70.0
+      },
+      "cautious_pass_speed_avg": 50.7927
+    }
+  }
+}
