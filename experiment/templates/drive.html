@@ -93,6 +93,15 @@
     border-radius: 6px;
   }
 
+  /* 기록 정지 결과 선택 모달 */
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.72); z-index: 100; align-items: center; justify-content: center; }
+  .modal-overlay.open { display: flex; }
+  .modal-box { background: #1e2433; border: 1px solid #334155; border-radius: 12px; padding: 24px; width: 300px; max-width: 90vw; }
+  .modal-box h3 { font-size: 1rem; color: #7dd3fc; margin-bottom: 16px; text-align: center; }
+  .modal-result-btn { display: block; width: 100%; margin-bottom: 8px; padding: 10px 14px; border: 2px solid #334155; border-radius: 8px; background: #2d3748; color: #e2e8f0; font-size: 0.88rem; cursor: pointer; text-align: left; transition: all 0.15s; }
+  .modal-result-btn:hover { border-color: #3b82f6; background: #1d4ed8; color: #fff; }
+  .modal-result-btn:last-child { margin-bottom: 0; }
+
   @media (max-width: 900px) { .grid { grid-template-columns: 1fr 1fr; } }
   @media (max-width: 600px) { .grid { grid-template-columns: 1fr; } }
 </style>
@@ -149,13 +158,18 @@
     <div class="label-grid">
       <button class="label-btn selected" data-label="정상 평지"   onclick="setLabel(this)">정상 평지</button>
       <button class="label-btn"          data-label="20도 언덕"   onclick="setLabel(this)">20도 언덕</button>
+      <!-- 추가: 20도 내리막 레이블 버튼 -->
+      <button class="label-btn"          data-label="20도 내리막" onclick="setLabel(this)">20도 내리막</button>
       <button class="label-btn"          data-label="10도 언덕"   onclick="setLabel(this)">10도 언덕</button>
+      <!-- 추가: 10도 내리막 레이블 버튼 -->
+      <button class="label-btn"          data-label="10도 내리막" onclick="setLabel(this)">10도 내리막</button>
       <button class="label-btn"          data-label="비닐 노면"   onclick="setLabel(this)">비닐 노면</button>
-      <button class="label-btn"          data-label="3cm 방지턱"  onclick="setLabel(this)">3cm 방지턱</button>
-      <button class="label-btn"          data-label="5cm 방지턱"  onclick="setLabel(this)">5cm 방지턱</button>
+      <!-- 1.5cm는 검증용으로 추후 추가 예정이므로 현재 제외 -->
+      <button class="label-btn"          data-label="1cm 방지턱"  onclick="setLabel(this)">1cm 방지턱</button>
+      <button class="label-btn"          data-label="2cm 방지턱"  onclick="setLabel(this)">2cm 방지턱</button>
     </div>
 
-    <h2 style="margin-top:12px;">결과 마킹</h2>
+    <h2 style="margin-top:12px;">결과 마킹 (기록 정지 시 자동 선택됨)</h2>
     <div class="result-grid">
       <button class="result-btn selected" data-result="normal"        onclick="setResult(this)">✓ 정상 통과</button>
       <button class="result-btn"          data-result="hill_fail"     onclick="setResult(this)">✗ 등판 실패</button>
@@ -163,6 +177,8 @@
       <button class="result-btn"          data-result="impact"        onclick="setResult(this)">💥 충격 과다</button>
       <button class="result-btn"          data-result="cautious_pass" onclick="setResult(this)">△ 주의 통과</button>
     </div>
+    <!-- 기록 정지 소급 적용 안내 -->
+    <p style="font-size:0.72rem; color:#64748b; margin-top:6px;">기록 정지 버튼을 누르면 전체 구간에 결과가 소급 적용됩니다</p>
   </div>
 
   <!-- ③ 기록 제어 + 실시간 센서 -->
@@ -207,6 +223,18 @@
          style="max-width:640px; border-radius:6px; display:block;">
     <!-- 카메라 없거나 스트림 실패 시 표시 -->
     <div id="no-camera-msg">📷 카메라 없음 (서버에서 웹캠을 인식하지 못했습니다)</div>
+  </div>
+</div>
+
+<!-- 기록 정지 결과 선택 모달: 버튼 클릭 시 confirmStop() 호출 -->
+<div id="stop-modal" class="modal-overlay">
+  <div class="modal-box">
+    <h3>이번 기록 결과를 선택하세요</h3>
+    <button class="modal-result-btn" onclick="confirmStop('normal')">✓ 정상 통과</button>
+    <button class="modal-result-btn" onclick="confirmStop('cautious_pass')">△ 주의 통과</button>
+    <button class="modal-result-btn" onclick="confirmStop('hill_fail')">✗ 등판 실패</button>
+    <button class="modal-result-btn" onclick="confirmStop('slip')">⚡ 슬립 발생</button>
+    <button class="modal-result-btn" onclick="confirmStop('impact')">💥 충격 과다</button>
   </div>
 </div>
 
@@ -351,7 +379,26 @@ function setResult(btn) {
 
 // ── 기록 제어 ────────────────────────────────────────────────────────────────
 function startRec() { socket.emit("start_recording"); }
-function stopRec()  { socket.emit("stop_recording");  }
+// 기록 정지: 즉시 정지하지 않고 결과 선택 모달을 먼저 표시
+function stopRec()  { document.getElementById("stop-modal").classList.add("open"); }
+
+// 모달에서 결과 선택 → 서버에 stop_recording_with_result 전송 후 모달 닫기
+function confirmStop(result) {
+  document.getElementById("stop-modal").classList.remove("open");
+  socket.emit("stop_recording_with_result", { result });
+}
+
+// ── recording_state 수신: 기록 정지 완료 후 UI 즉시 갱신 ─────────────────────
+socket.on("recording_state", d => {
+  const recEl = document.getElementById("rec-status");
+  if (d.recording) {
+    recEl.textContent = "● 기록 중";
+    recEl.className = "rec-status on";
+  } else {
+    recEl.textContent = "대기 중";
+    recEl.className = "rec-status off";
+  }
+});
 
 // ── [수정 3] 교정 시작 ────────────────────────────────────────────────────────
 function startCalib() {
@@ -365,11 +412,10 @@ function startCalib() {
   socket.emit("start_calibration");
 }
 
-// ── [수정 4] 웹캠 로드 실패 시 처리 ─────────────────────────────────────────
+// ── 웹캠 로드 실패 시 0.5초 후 자동 재연결 (캐시 우회용 타임스탬프 파라미터 추가)
 function onCameraError() {
-  // img 숨기고 안내 텍스트 표시
-  document.getElementById("camera-stream").style.display = "none";
-  document.getElementById("no-camera-msg").style.display = "block";
+  const img = document.getElementById("camera-stream");
+  setTimeout(() => { img.src = "/video_feed?t=" + Date.now(); }, 500);
 }
 </script>
 </body>

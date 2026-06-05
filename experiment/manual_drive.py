@@ -9,6 +9,7 @@ import csv
 import time
 import math
 import signal
+import subprocess  # v4l2-ctl 실행으로 USB 웹캠 경로 탐지에 사용
 import threading
 from pathlib import Path
 from datetime import datetime
@@ -22,17 +23,12 @@ from flask_socketio import SocketIO, emit
 from flask_cors import CORS
 
 # ─────────────────────────────────────────────────────────────────────────────
-# [수정 1] 모터 드라이버: sensors/motor.py → Move.py 직접 import
+# 모터 드라이버: sensors/motor.py 의 MotorController 직접 사용
 # ─────────────────────────────────────────────────────────────────────────────
 
-_move_ok = False  # Move.py 로드 성공 플래그
-try:
-    import Move as move   # ~/insite/Move.py 직접 사용
-    move.setup()          # GPIO 핀 초기화
-    _move_ok = True
-    print("[INIT] Move (모터 드라이버) OK")
-except Exception as e:
-    print(f"[INIT] Move FAIL (mock 모드): {e}")
+from sensors.motor import MotorController
+_motor = MotorController()  # 실제 모터 드라이버 인스턴스
+print("[INIT] Motor OK")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 나머지 센서 드라이버 로드 (하드웨어 없으면 자동 mock 전환)
@@ -64,7 +60,8 @@ except Exception as e:
     print(f"[INIT] Ultrasonic FAIL (mock): {e}")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# [수정 4] 웹캠 초기화 (OpenCV MJPEG 스트리밍용)
+# 웹캠 초기화 (OpenCV MJPEG 스트리밍용)
+# 재부팅마다 /dev/videoN 인덱스가 바뀌는 문제를 v4l2-ctl로 해결
 # 실패하거나 카메라 없으면 _camera = None 유지, 서버는 계속 동작
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -73,19 +70,94 @@ _camera = None      # VideoCapture 객체
 _frame_lock = threading.Lock()    # 최신 프레임 버퍼 보호 락
 _latest_frame = None              # 카메라 루프가 갱신하는 JPEG 바이트 버퍼
 
+
+def _find_usb_webcam_path():
+    """v4l2-ctl --list-devices 파싱으로 USB 웹캠 경로와 장치명을 반환.
+    찾지 못하거나 명령 실패 시 (None, None) 반환.
+    """
+    try:
+        # v4l2-ctl 실행: 연결된 모든 V4L2 장치 목록 출력
+        proc = subprocess.run(
+            ["v4l2-ctl", "--list-devices"],
+            capture_output=True, text=True, timeout=5
+        )
+        output = proc.stdout
+    except Exception:
+        # v4l2-ctl 미설치 또는 실행 오류
+        return None, None
+
+    device_name = None            # 현재 블록의 장치 헤더명
+    current_block_is_usb = False  # 현재 파싱 중인 블록이 USB 웹캠 블록인지
+
+    for line in output.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            # 빈 줄: 장치 블록 구분자 → 블록 상태 초기화
+            current_block_is_usb = False
+            device_name = None
+            continue
+
+        if not line.startswith(("\t", " ")):
+            # 들여쓰기 없는 줄 = 장치 헤더 (예: "USB2.0 PC CAMERA (usb-...):")
+            upper = stripped.upper()
+            # "USB" 또는 "PC CAMERA" 키워드로 USB 웹캠 블록 식별
+            if "USB" in upper or "PC CAMERA" in upper:
+                current_block_is_usb = True
+                # 괄호 앞부분만 장치명으로 추출 (콜론 제거)
+                device_name = stripped.split("(")[0].strip().rstrip(":")
+            else:
+                current_block_is_usb = False
+                device_name = None
+        elif current_block_is_usb and stripped.startswith("/dev/video"):
+            # USB 웹캠 블록 내 첫 번째 /dev/video 경로 반환
+            return stripped, device_name
+
+    return None, None
+
+
 try:
     import cv2 as _cv2_module
     cv2 = _cv2_module
-    # /dev/video0 부터 순서대로 탐색
-    for _cam_idx in range(4):
-        _cap = cv2.VideoCapture(_cam_idx)
+
+    _webcam_opened = False  # 웹캠 초기화 성공 여부
+
+    # ── 1단계: v4l2-ctl로 USB 웹캠 경로 자동 탐지 ─────────────────────────
+    _usb_path, _usb_name = _find_usb_webcam_path()
+    if _usb_path is not None:
+        _cap = cv2.VideoCapture(_usb_path)
         if _cap.isOpened():
+            # 딜레이 최소화: 내부 버퍼 1프레임 제한 및 해상도 축소
+            _cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            _cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
+            _cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
             _camera = _cap
-            print(f"[INIT] 웹캠 OK (/dev/video{_cam_idx})")
-            break
-        _cap.release()
-    if _camera is None:
-        print("[INIT] 웹캠 없음 (0~3번 장치 탐색 실패)")
+            # 성공한 장치 경로와 이름을 함께 로그 출력
+            _label = _usb_name if _usb_name else "USB 웹캠"
+            print(f"[INIT] 웹캠 OK ({_usb_path}) — {_label}")
+            _webcam_opened = True
+        else:
+            _cap.release()
+            print(f"[INIT] v4l2-ctl 경로({_usb_path}) 열기 실패 → 폴백 시도")
+
+    # ── 2단계: v4l2-ctl 실패 시 /dev/video1~3 순서로 폴백 ─────────────────
+    # /dev/video0 은 CSI 카메라 전용이므로 절대 시도하지 않음
+    if not _webcam_opened:
+        for _fallback_path in ["/dev/video1", "/dev/video2", "/dev/video3"]:
+            _cap = cv2.VideoCapture(_fallback_path)
+            if _cap.isOpened():
+                # 딜레이 최소화: 내부 버퍼 1프레임 제한 및 해상도 축소
+                _cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                _cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
+                _cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+                _camera = _cap
+                print(f"[INIT] 웹캠 OK ({_fallback_path}) — 폴백 탐지")
+                _webcam_opened = True
+                break
+            _cap.release()
+
+    if not _webcam_opened:
+        print("[INIT] 웹캠 없음 (v4l2-ctl 탐지 및 /dev/video1~3 폴백 모두 실패)")
+
 except ImportError:
     print("[INIT] OpenCV 없음 — 웹캠 비활성화")
 except Exception as e:
@@ -413,14 +485,15 @@ def _camera_loop():
         if cv2 is None or _camera is None or not _camera.isOpened():
             time.sleep(0.1)
             continue
+        _camera.read()  # 오래된 버퍼 프레임 소비 (내부 버퍼 클리어로 딜레이 방지)
         ret, frame = _camera.read()
         if ret:
-            # JPEG 품질 70으로 인코딩 (대역폭/화질 균형)
-            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            # 실험용 영상: 딜레이 최소화 우선으로 품질 50 적용
+            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
             if ok:
                 with _frame_lock:
                     _latest_frame = buf.tobytes()
-        time.sleep(0.05)  # ~20fps 상한
+        time.sleep(0.033)  # ~30fps 상한
 
 
 def _gen_frames():
@@ -493,11 +566,7 @@ def on_connect():
 
 @socketio.on("motor_cmd")
 def on_motor_cmd(data):
-    """[수정 1] 방향 + 속도 명령 처리: Move.py API 사용
-    move.move(speed, direction, turn)
-      direction: 1(전진) / -1(후진)
-      turn: "mid"(직진) / "left" / "right" / "rotate-left" / "rotate-right"
-    """
+    """방향 + 속도 명령 처리: MotorController API 사용"""
     global _speed_cmd
     direction = str(data.get("direction", "stop"))
     speed     = int(data.get("speed", 50))
@@ -506,24 +575,19 @@ def on_motor_cmd(data):
     with _lock:
         _speed_cmd = speed
 
-    if _move_ok:
-        try:
-            if direction == "forward":
-                move.move(speed, 1, "mid")      # 전진 직진
-            elif direction == "backward":
-                move.move(speed, -1, "mid")     # 후진 직진
-            elif direction == "left":
-                move.move(speed, 1, "left")     # 좌회전
-            elif direction == "right":
-                move.move(speed, 1, "right")    # 우회전
-            else:
-                move.motorStop()                # 정지 (stop / space)
-        except Exception as e:
-            print(f"[MOTOR CMD] {e}")
-    else:
-        # Move.py 없을 때 mock 로그
-        if direction != "stop":
-            print(f"[MOTOR MOCK] {direction} @ {speed}%")
+    try:
+        if direction == "forward":
+            _motor.forward(speed)        # 전진
+        elif direction == "backward":
+            _motor.backward(speed)       # 후진
+        elif direction == "left":
+            _motor.rotate_left(speed)    # 좌회전
+        elif direction == "right":
+            _motor.rotate_right(speed)   # 우회전
+        else:
+            _motor.stop()                # 정지 (stop / space)
+    except Exception as e:
+        print(f"[MOTOR CMD] {e}")
 
 
 @socketio.on("start_calibration")
@@ -569,16 +633,59 @@ def on_start_recording():
 
 @socketio.on("stop_recording")
 def on_stop_recording():
+    """하위 호환용: result = _current_result 그대로 유지하며 정지"""
     global _recording
     with _lock:
         _recording = False
-    # [수정 1] 기록 정지 시 모터도 정지 (Move.motorStop 사용)
-    if _move_ok:
-        try:
-            move.motorStop()
-        except Exception:
-            pass
+    try:
+        _motor.stop()
+    except Exception:
+        pass
     print("[LOG] 기록 정지")
+    emit("recording_state", {"recording": False})
+
+
+@socketio.on("stop_recording_with_result")
+def on_stop_recording_with_result(data):
+    """기록 정지 + 이번 세션 전체 result 소급 적용"""
+    global _recording, _row_count
+    result = str(data.get("result", "normal"))
+
+    # 기록 정지 및 현재 세션 행 수 스냅샷
+    with _lock:
+        _recording = False
+        row_count  = _row_count
+
+    # 진행 중인 CSV 쓰기가 완료될 때까지 대기 (logging_loop 주기 고려)
+    time.sleep(0.15)
+
+    try:
+        _motor.stop()
+    except Exception:
+        pass
+
+    # CSV 소급 적용: 마지막 row_count 행의 result 컬럼 덮어쓰기
+    if row_count > 0:
+        try:
+            with open(CSV_PATH, "r", newline="") as f:
+                all_rows = list(csv.reader(f))
+            result_col = CSV_HEADER.index("result")
+            # 헤더(인덱스 0)를 유지하고 마지막 row_count 행만 수정
+            start = max(1, len(all_rows) - row_count)
+            for i in range(start, len(all_rows)):
+                if len(all_rows[i]) > result_col:
+                    all_rows[i][result_col] = result
+            with open(CSV_PATH, "w", newline="") as f:
+                csv.writer(f).writerows(all_rows)
+            print(f"[LOG] 소급 적용 완료: result={result}, {row_count}행")
+        except Exception as e:
+            print(f"[CSV] 소급 적용 오류: {e}")
+
+    # 다음 세션을 위해 행 카운터 초기화
+    with _lock:
+        _row_count = 0
+
+    print("[LOG] 기록 정지 (stop_recording_with_result)")
     emit("recording_state", {"recording": False})
 
 
@@ -588,12 +695,11 @@ def on_stop_recording():
 
 def _cleanup(signum, frame):
     print("\n[SHUTDOWN] 하드웨어 자원 반환 중...")
-    # [수정 1] MotorController.stop() → move.motorStop()
-    if _move_ok:
-        try:
-            move.motorStop()
-        except Exception:
-            pass
+    # 모터 정지
+    try:
+        _motor.stop()
+    except Exception:
+        pass
     if _imu is not None:
         try:
             _imu.close()

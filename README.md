@@ -337,7 +337,7 @@ echo $GEMINI_API_KEY
 Isolation Forest → 이상 감지?
    │ Yes
    ▼
-Orbbec Astra로 사진 촬영
+사진 촬영
    │
    ▼
 Gemini 2.5 Flash 호출 (Few-shot 프롬프트 포함)
@@ -425,17 +425,13 @@ cd ~/insite
 git add 파일명
 # 또는 전체 추가
 git add .
-
-# 커밋 메시지 작성
 git commit -m "수정 내용 간단히 설명"
-
-# GitHub 업로드
 git push origin master
 ```
 
 ---
 
-## 16. 주의사항
+## 주의사항
 
 > **팀원 파일 수정 금지**
 > `app/cv_dashboard.py`, `app/dashboard_collect.py` 는 라인트래킹 파트 담당 파일입니다.
@@ -448,20 +444,4 @@ git push origin master
 ```bash
 sudo shutdown -h now
 ```
-
 초록 LED가 꺼진 후 전원을 분리합니다.
-
----
-
-## 17. 자주 발생하는 문제 해결
-
-| 증상 | 원인 | 해결 방법 |
-|------|------|-----------|
-| `pi.local` 접속 안 됨 | mDNS 미지원 또는 네트워크 문제 | `ssh pi@192.168.0.50` 으로 IP 직접 접속 |
-| `(.venv)` 안 보임 | 가상환경 미활성화 | `source ~/insite/.venv/bin/activate` 실행 |
-| 대시보드 브라우저 접속 안 됨 | 서버 미실행 또는 다른 네트워크 | Pi에서 `python dashboard.py` 실행 확인, 같은 WiFi 연결 확인 |
-| 모터가 움직이지 않을 때 | I2C 연결 불량 또는 전원 문제 | `i2cdetect -y 1` 로 `0x5f` 감지 여부 확인 |
-| 센서값이 고정될 때 | 센서 초기화 실패 또는 배선 불량 | 해당 센서 단독 테스트 스크립트 실행 |
-| Gemini API 오류 발생 시 | API 키 미설정 또는 할당량 초과 | `echo $GEMINI_API_KEY` 로 키 확인, Google AI Studio에서 할당량 확인 |
-| 카메라 영상이 안 나올 때 | picamera2 미설치 또는 CSI 연결 불량 | `rpicam-hello` 로 카메라 동작 확인 |
-| I2C 장치가 안 잡힐 때 | 배선 불량 또는 I2C 미활성화 | `sudo raspi-config` → Interface Options → I2C 활성화 확인 |

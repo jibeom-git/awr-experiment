@@ -1,7 +1,7 @@
 # app/cv_dashboard.py
 # OpenCV 라인 추종 + 초록 분기점 표식 기반 경로 선택 대시보드
 #
-# 실행: python app/cv_dashboard.py
+# 실행: python app/cv_dashboard_bypass.py
 # 접속: http://192.168.0.50:5001
 
 import sys, os, time, threading, copy
