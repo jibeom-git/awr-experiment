@@ -302,45 +302,55 @@ def run_ai_decision(cur_route: str, frame_snap):
         else:
             bump = "2cm"
 
+        # ── 규칙표 적용 ──────────────────────────────────────
         action = "pass"
-        speed = config["base_speed"] 
-        
-        # 4차원 상호 검증 데이터 분기 트리 매핑 구역
+        speed  = config["base_speed"]  # 기본값: 항상 base_speed 유지
+
         if mode == "fast":
             if not heavy:
                 if route == "A":
-                    if bump == "none": action, speed = "pass", 60
-                    else: action = "detour"
+                    if bump == "none":   action, speed = "pass",   70   # 경사로 오르막 70%
+                    elif bump == "1cm":  action = "detour"               # B로 우회
+                    elif bump == "2cm":  action = "detour"               # B로 우회
                 elif route == "B":
-                    if bump == "none": action, speed = "pass", 50
-                    elif bump == "1cm": action, speed = "pass", 70
-                    elif bump == "2cm": action = "detour"
+                    if bump == "none":   action = "pass"                 # 기본 속도 유지
+                    elif bump == "1cm":  action, speed = "pass",   70   # 70%로 통과
+                    elif bump == "2cm":  action = "detour"               # C로 우회
                 elif route == "C":
-                    if bump == "none": action, speed = "pass", 50
-                    elif bump == "1cm": action, speed = "pass", 70
-                    elif bump == "2cm": action = "stop"
-            else:
-                if route == "A": action = "detour"
+                    if bump == "none":   action = "pass"                 # 기본 속도 유지
+                    elif bump == "1cm":  action, speed = "pass",   60   # 60%로 통과
+                    elif bump == "2cm":  action = "stop"                 # 운영자 개입
+            else:  # heavy (140g 이상)
+                if route == "A":
+                    action = "detour"                                    # 무조건 B로 우회
                 elif route == "B":
-                    if bump == "none": action, speed = "pass", 50
-                    else: action = "detour"
+                    if bump == "none":   action, speed = "pass",   80   # 무거울때 80%
+                    elif bump == "1cm":  action = "detour"               # C로 우회
+                    elif bump == "2cm":  action = "detour"               # C로 우회
                 elif route == "C":
-                    if bump == "none": action, speed = "pass", 50
-                    elif bump == "1cm": action, speed = "pass", 70
-                    elif bump == "2cm": action = "stop"
-        else: # safe
-            if route == "A":
-                action = "detour"
-            elif route == "B":
-                if bump == "none": action, speed = "pass", 50
-                elif bump == "1cm":
-                    if not heavy: action, speed = "pass", 70
-                    else: action = "detour"
-                elif bump == "2cm": action = "detour"
-            elif route == "C":
-                if bump == "none": action, speed = "pass", 50
-                elif bump == "1cm": action, speed = "pass", 70
-                elif bump == "2cm": action = "stop"
+                    if bump == "none":   action = "pass"                 # 기본 속도 유지
+                    elif bump == "1cm":  action, speed = "pass",   70   # 70%로 통과
+                    elif bump == "2cm":  action = "stop"                 # 운영자 개입
+
+        else:  # safe (B 경로부터 시작)
+            if not heavy:
+                if route == "B":
+                    if bump == "none":   action = "pass"                 # 기본 속도 유지
+                    elif bump == "1cm":  action, speed = "pass",   60   # 60%로 통과
+                    elif bump == "2cm":  action = "detour"               # C로 우회
+                elif route == "C":
+                    if bump == "none":   action = "pass"                 # 기본 속도 유지
+                    elif bump == "1cm":  action, speed = "pass",   60   # 60%로 통과
+                    elif bump == "2cm":  action = "stop"                 # 운영자 개입
+            else:  # heavy (140g 이상)
+                if route == "B":
+                    if bump == "none":   action, speed = "pass",   60   # 오르막 60%
+                    elif bump == "1cm":  action = "detour"               # C로 우회
+                    elif bump == "2cm":  action = "detour"               # C로 우회
+                elif route == "C":
+                    if bump == "none":   action = "pass"                 # 기본 속도 유지
+                    elif bump == "1cm":  action, speed = "pass",   70   # 70%로 통과
+                    elif bump == "2cm":  action = "stop"                 # 운영자 개입
 
         print(f"[VLM Matrix Evaluated] Action: {action} / Dynamic Speed: {speed}%")
 
