@@ -12,7 +12,7 @@ sys.path.insert(0, '/home/pi/insite')
 # 🔑 [구글 제미나이 API 키 통합 관리 센터]
 # 새로운 계정으로 키를 발급받으시면 오직 여기 한 곳만 수정해 주시면 됩니다!
 # =====================================================================
-os.environ["GEMINI_API_KEY"] = "제미나이 API 키".strip()
+os.environ["GEMINI_API_KEY"] = "".strip()
 
 current_key_debug = os.environ.get('GEMINI_API_KEY') or ""
 print(f"[Key-Debug] 현재 전역 API KEY 로드 성공: {current_key_debug[:10]}...")
@@ -138,7 +138,7 @@ config = {
     "spin_speed":     25,
     "thresh":         43,
     "roi_top":        0.7,
-    "dead_zone":      15,            # 기본 공차 수치 (하단 연산 커널에서 1.5배 스케일업 가변 확장)
+    "dead_zone":      50,            # 기본 공차 수치 (하단 연산 커널에서 1.5배 스케일업 가변 확장)
     "kp":             0.8,
     "ki":             0.002,
     "forward_time":   0.5,
@@ -147,7 +147,7 @@ config = {
     "green_h_max":    85,
     "green_s_min":    80,
     "green_v_min":    50,
-    "green_min_area": 200,
+    "green_min_area": 120,
     "running":        False,         # True 시 자동 주행, False 시 수동 모드 대기
     "route":          "A",       
     "user_mode":      "safe",    
@@ -244,13 +244,11 @@ def detect_line_and_green(frame, cfg):
 
     debug = frame.copy()
     cv2.line(debug, (0, roi_y), (w, roi_y), (255,180,0), 2)
-    cv2.line(debug, (w//2, roi_y), (w//2, h), (0,80,255), 1)
     
     # [사용자 명시 조건] 2cm 가로폭 트랙 조향 유연화를 위해 데드존 경계선을 기존 대비 1.5배 확장하여 드로잉
-    dz = int(cfg["dead_zone"] * 1.5)
-    cv2.line(debug, (w//2-dz, roi_y), (w//2-dz, h), (80,80,255), 1)
-    cv2.line(debug, (w//2+dz, roi_y), (w//2+dz, h), (80,80,255), 1)
-
+    dz = int(cfg["dead_zone"] * 2)
+    cv2.rectangle(debug, (w//2 - dz, roi_y), (w//2 + dz, h), (0, 0, 200), 1)
+    cv2.line(debug, (w//2, roi_y), (w//2, h), (0, 0, 255), 2)
     if cx is not None:
         cv2.circle(debug, (cx, cy), 8, (0,255,80), -1)
         err = cx - w//2
@@ -611,14 +609,14 @@ def drive_loop():
                     if cam is not None: frame_sub = cam.capture()
                     else: break
                     cx_sub, _, _, _ = detect_line_and_green(frame_sub, cfg)
-                    if cx_sub is not None and abs(cx_sub - 160) < 18:
+                    if cx_sub is not None and abs(cx_sub - 160) < int(cfg["dead_zone"] * 2 * 0.8):
                         motor.motorStop()
                         break
                     spin_fn(34)
                     time.sleep(0.02)
                     
             now = time.time()
-            g_junction_cooldown = now + 2.5
+            g_junction_cooldown = now + 4.0
             green_seen = True
             continue
 
@@ -633,6 +631,10 @@ def drive_loop():
             with lock: state["action"] = "라인유실_탐색모드"
         else:
             error = cx - CENTER_X
+            # 빨간 영역 80% 이내면 error 0으로 억제 (조향 안 함)
+            _dz = int(cfg["dead_zone"] * 2)
+            if abs(error) < _dz:
+                error = 0
             integral = max(min(integral + error * dt, 150), -150)
             
             speed_scaler = max(0.4, 1.0 - (cruise_speed - 45) / 100.0)
@@ -643,7 +645,7 @@ def drive_loop():
             correction = max(min(correction, max_allow_corr), -max_allow_corr)
             lost_dir = 1 if error > 0 else (-1 if error < 0 else lost_dir)
 
-            current_dead_zone = int(cfg["dead_zone"] * 1.5)
+            current_dead_zone = int(cfg["dead_zone"] * 2)
             
             if abs(error) < current_dead_zone:
                 go_forward(cruise_speed)
@@ -852,7 +854,7 @@ HTML = '''<!DOCTYPE html>
   .card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--cyan),transparent);opacity:.3;}
   .card-title{font-size:.65rem;color:var(--sub);letter-spacing:2px;text-transform:uppercase;margin-bottom:12px;}
   .cam-wrap{position:relative;border-radius:8px;overflow:hidden;background:#000;border:1px solid var(--border);}
-  .cam-wrap img{width:100%;display:block;}
+  .cam-wrap img{width:100%;max-height:200px;object-fit:contain;display:block;}
   .cam-overlay{position:absolute;bottom:8px;left:8px;right:8px;display:flex;justify-content:space-between;align-items:flex-end;}
   .dist-tag{background:rgba(0,0,0,.8);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:.8rem;}
   .dist-val{font-weight:700;color:var(--green);}
@@ -1023,6 +1025,7 @@ function sendCommand() {
 }
 
 window.addEventListener('keydown', function(e) {
+  if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') return;
   if (["ArrowUp", "KeyW", "w", "W"].includes(e.key) && activeKey !== "forward") {
     activeKey = "forward"; sendMove("forward");
   } else if (["ArrowDown", "KeyS", "s", "S"].includes(e.key) && activeKey !== "backward") {
