@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Insite AI 코어 고해상도 사후 레이블링 튜너</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #0f1117; color: #e2e8f0; padding: 16px; }
+  h1 { font-size: 1.1rem; color: #7dd3fc; margin-bottom: 12px; font-weight: 700; letter-spacing: 0.5px; }
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; background: #1e2433; padding: 10px; border-radius: 8px; border: 1px solid #283046; }
+  button { border: none; border-radius: 6px; padding: 7px 14px; cursor: pointer; font-size: 0.8rem; font-weight: bold; transition: background 0.15s; }
+  #btn-load { background: #2563eb; color: #fff; }
+  #btn-load:hover { background: #1d4ed8; }
+  #btn-save { background: #16a34a; color: #fff; }
+  #btn-save:hover { background: #15803d; }
+  #btn-apply { background: #d97706; color: #fff; }
+  #btn-apply:hover { background: #b45309; }
+  
+  .result-sel { display: flex; gap: 6px; flex-wrap: wrap; }
+  .r-btn { background: #2d3748; color: #e2e8f0; border: 2px solid transparent; border-radius: 6px; padding: 6px 12px; font-size: 0.76rem; font-weight: bold; cursor: pointer; transition: all 0.15s; }
+  .r-btn.selected { border-color: #f59e0b; background: #92400e; color: #fff; }
+  .r-btn[data-r="normal"].selected { border-color: #10b981; background: #064e3b; }
+  
+  .chart-wrap { background: #1e2433; border-radius: 10px; padding: 14px; margin-bottom: 12px; border: 1px solid #283046; }
+  canvas { width: 100% !important; }
+  #info-bar { font-size: 0.78rem; color: #94a3b8; margin-bottom: 8px; padding-left: 4px; }
+  #sel-info { color: #f59e0b; font-weight: bold; }
+  .status { font-size: 0.78rem; margin-left: auto; color: #64748b; font-weight: bold; }
+  .status.ok { color: #4ade80; }
+</style>
+</head>
+<body>
+<h1>📊 INSITE CSV 데이터 정합성 검증 및 구간 레이블링 엔진</h1>
+
+<div class="toolbar">
+  <button id="btn-load" onclick="loadData()">↺ 원본 CSV 데이터 풀링</button>
+  <div class="result-sel" id="result-sel">
+    <span style="font-size:0.75rem;color:#94a3b8;align-self:center;font-weight:bold;">인젝션 타겟 마킹:</span>
+    <button class="r-btn selected" data-r="normal" onclick="selectR(this)">정상 (normal)</button>
+    <button class="r-btn" data-r="cautious_pass" onclick="selectR(this)">주의 통과 (cautious_pass)</button>
+    <button class="r-btn" data-r="hill_fail" onclick="selectR(this)">등판 실패 (hill_fail)</button>
+    <button class="r-btn" data-r="slip" onclick="selectR(this)">슬립 (slip)</button>
+    <button class="r-btn" data-r="impact" onclick="selectR(this)">충격 (impact)</button>
+  </div>
+  <button id="btn-apply" onclick="applyRange()">✔ 선택 구간 강제 매핑</button>
+  <button id="btn-save" onclick="saveData()">💾 섀시 파일 커밋 및 저장</button>
+  <span class="status" id="status-msg"></span>
+</div>
+
+<div id="info-bar">
+  하드 스토리지 로드 완료 볼륨: <b id="total-rows" style="color:#f1f5f9;">0</b> 행 &nbsp;|&nbsp;
+  드래그 선택 버퍼: <span id="sel-info">없음</span>
+</div>
+
+<div class="chart-wrap">
+  <div style="font-size:0.72rem;color:#94a3b8;margin-bottom:6px;font-weight:bold;">Chassis Pitch Profile (°) — 마우스 드래그로 구간 선택</div>
+  <canvas id="chart-pitch" height="110"></canvas>
+</div>
+
+<div class="chart-wrap">
+  <div style="font-size:0.72rem;color:#94a3b8;margin-bottom:6px;font-weight:bold;">Z-Axis Acceleration Vector Spikes (m/s²)</div>
+  <canvas id="chart-az" height="80"></canvas>
+</div>
+
+<div class="chart-wrap">
+  <div style="font-size:0.72rem;color:#94a3b8;margin-bottom:6px;font-weight:bold;">Result Class Identity Map (주행 결과 래스터 뷰)</div>
+  <canvas id="chart-result" height="35"></canvas>
+</div>
+
+<script>
+let allRows = [];
+let selectedResult = "normal";
+let selStart = null, selEnd = null;
+let isDragging = false;
+
+// trainer.py 내부의 시각 다이어그램 색상 전역 정렬
+const RESULT_COLORS = {
+  normal:        "#10b981",
+  cautious_pass: "#3b82f6",
+  hill_fail:     "#ef4444",
+  slip:          "#f59e0b",
+  impact:        "#a855f7",
+};
+
+async function loadData() {
+  setStatus("하드 디스크 저장소 파싱 중...", false);
+  const res = await fetch("/api/data");
+  const d = await res.json();
+  allRows = d.rows;
+  document.getElementById("total-rows").textContent = allRows.length;
+  setStatus(`${allRows.length}개 주행 타임 벡터 로드 성공`, true);
+  renderCharts();
+}
+
+function selectR(btn) {
+  document.querySelectorAll(".r-btn").forEach(b => b.classList.remove("selected"));
+  btn.classList.add("selected");
+  selectedResult = btn.dataset.r;
+}
+
+async function applyRange() {
+  if (selStart === null || selEnd === null) {
+    alert("그래프 영역을 마우스로 드래그하여 적용 타겟 구간을 지정하세요.");
+    return;
+  }
+  const s = Math.min(selStart, selEnd);
+  const e = Math.max(selStart, selEnd);
+
+  const res = await fetch("/api/label_range", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ start_idx: s, end_idx: e, result: selectedResult }),
+  });
+  const d = await res.json();
+  if (d.ok) {
+    setStatus(`인덱스 ${s}~${e} 구간의 ${d.changed}개 데이터 레이블 갱신 동기화 완료`, true);
+    for (let i = s; i <= e && i < allRows.length; i++) {
+      allRows[i].result = selectedResult;
+    }
+    renderCharts();
+  } else {
+    setStatus("오류: " + d.error, false);
+  }
+}
+
+async function saveData() {
+  if (!allRows.length) return;
+  setStatus("스토리지에 주 주행 로그 저장 물리 아웃풋 개시...", false);
+  const res = await fetch("/api/save", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ rows: allRows }),
+  });
+  const d = await res.json();
+  setStatus(d.ok ? `데이터 정합성 튜닝 완료: ${d.saved}행 영구 커밋 완료` : "스토리지 IO 오류 발생", d.ok);
+}
+
+function setStatus(msg, ok) {
+  const el = document.getElementById("status-msg");
+  el.textContent = msg;
+  el.className = ok ? "status ok" : "status";
+}
+
+let chartPitch = null, chartAz = null, chartResult = null;
+
+function renderCharts() {
+  if (!allRows.length) return;
+
+  const labels = allRows.map((r, i) => i);
+  const pitchData = allRows.map(r => parseFloat(r.pitch) || 0);
+  const azData = allRows.map(r => parseFloat(r.accel_z) || 0);
+  const resultColors = allRows.map(r => RESULT_COLORS[r.result.trim()] || "#475569");
+
+  if (chartPitch) chartPitch.destroy();
+  const ctxP = document.getElementById("chart-pitch").getContext("2d");
+  chartPitch = new Chart(ctxP, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [{
+        data: pitchData,
+        borderColor: "#3b82f6",
+        borderWidth: 1,
+        pointRadius: 0,
+        tension: 0.1,
+        fill: false,
+      }],
+    },
+    options: {
+      animation: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { display: false },
+        y: { ticks: { color: "#94a3b8", font: { size: 9 } }, grid: { color: "#2d3748" } },
+      },
+    },
+  });
+
+  const canvasP = document.getElementById("chart-pitch");
+  canvasP.onmousedown = (e) => {
+    isDragging = true;
+    selStart = getDataIndex(e, chartPitch);
+  };
+  canvasP.onmousemove = (e) => {
+    if (!isDragging) return;
+    selEnd = getDataIndex(e, chartPitch);
+    updateSelInfo();
+  };
+  canvasP.onmouseup = () => { isDragging = false; updateSelInfo(); };
+
+  if (chartAz) chartAz.destroy();
+  const ctxAz = document.getElementById("chart-az").getContext("2d");
+  chartAz = new Chart(ctxAz, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [{
+        data: azData,
+        borderColor: "#a855f7",
+        borderWidth: 1,
+        pointRadius: 0,
+        tension: 0.1,
+        fill: false,
+      }],
+    },
+    options: {
+      animation: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { display: false },
+        y: { ticks: { color: "#94a3b8", font: { size: 9 } }, grid: { color: "#2d3748" } },
+      },
+    },
+  });
+
+  if (chartResult) chartResult.destroy();
+  const ctxR = document.getElementById("chart-result").getContext("2d");
+  chartResult = new Chart(ctxR, {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [{
+        data: allRows.map(() => 1),
+        backgroundColor: resultColors,
+        borderWidth: 0,
+        barPercentage: 1.0,
+        categoryPercentage: 1.0,
+      }],
+    },
+    options: {
+      animation: false,
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      scales: { x: { display: false }, y: { display: false } },
+    },
+  });
+}
+
+function getDataIndex(e, chart) {
+  const rect = chart.canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const area = chart.chartArea;
+  const n = allRows.length;
+  const ratio = (x - area.left) / (area.right - area.left);
+  return Math.max(0, Math.min(n - 1, Math.round(ratio * (n - 1))));
+}
+
+function updateSelInfo() {
+  if (selStart === null || selEnd === null) return;
+  const s = Math.min(selStart, selEnd);
+  const e = Math.max(selStart, selEnd);
+  document.getElementById("sel-info").textContent = `타겟 스팬 [Index ${s} ~ ${e}] (${e - s + 1}개 주행 프레임 선택됨)`;
+}
+
+loadData();
+</script>
+</body>
+</html>

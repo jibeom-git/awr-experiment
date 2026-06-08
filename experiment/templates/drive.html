@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Insite 고품질 데이터 수집 허브</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #0f1117; color: #e2e8f0; min-height: 100vh; padding: 16px; }
+
+  /* 상단 헤더 */
+  .top-bar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 12px; flex-wrap: wrap; border-bottom: 1px solid #1e293b; padding-bottom: 10px; }
+  h1 { font-size: 1.15rem; color: #7dd3fc; letter-spacing: 1px; }
+
+  /* 주행 모드 토글 컨트롤 버튼 */
+  .mode-group { display: flex; gap: 4px; background: #1e2433; border: 1px solid #334155; border-radius: 8px; padding: 4px; }
+  .mode-select-btn { border: none; padding: 6px 14px; font-size: 0.78rem; font-weight: 700; border-radius: 6px; cursor: pointer; background: transparent; color: #64748b; transition: all 0.2s; }
+  .mode-select-btn.active-safe { background: #00e5ff; color: #000; box-shadow: 0 0 12px rgba(0,229,255,0.4); }
+  .mode-select-btn.active-fast { background: #ff9500; color: #000; box-shadow: 0 0 12px rgba(255,149,0,0.4); }
+
+  #btn-calib { background: #7c3aed; border: none; color: white; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 0.82rem; font-weight: 600; }
+  #btn-calib:hover { background: #6d28d9; }
+  #btn-calib:disabled { background: #4b5563; cursor: not-allowed; }
+
+  /* 교정 상태 배너 */
+  #calib-banner { background: #1e1b4b; border: 1px solid #4338ca; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; display: none; }
+  #calib-msg { font-size: 0.85rem; color: #a5b4fc; font-weight: 600; }
+  #calib-result-area { margin-top: 8px; display: none; }
+  #calib-result-area h3 { font-size: 0.72rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+  .calib-row { display: flex; justify-content: space-between; font-size: 0.8rem; padding: 3px 0; border-bottom: 1px solid #1e293b; }
+  .calib-row .ck { color: #64748b; }
+  .calib-row .cv { color: #4ade80; font-weight: 600; }
+
+  /* 메인 3열 그리드 */
+  .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .card { background: #1e2433; border-radius: 10px; padding: 14px; border: 1px solid #283046; }
+  .card h2 { font-size: 0.72rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; border-left: 3px solid #3b82f6; padding-left: 6px; }
+
+  /* 방향 패널 D-PAD */
+  .dpad { display: grid; grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr; gap: 6px; width: 150px; margin: 0 auto 12px; }
+  .dpad button { background: #2d3748; border: none; border-radius: 8px; color: #e2e8f0; font-size: 1.1rem; padding: 12px; cursor: pointer; transition: background 0.1s; }
+  .dpad button:active, .dpad button.active { background: #3b82f6; color: #fff; }
+  .dpad .empty { visibility: hidden; }
+  
+  .speed-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+  .speed-row label { font-size: 0.72rem; color: #94a3b8; }
+  input[type=range] { flex: 1; accent-color: #3b82f6; }
+  #speed-val { font-weight: bold; color: #7dd3fc; width: 36px; text-align: right; font-size: 0.85rem; }
+
+  /* 레이블 가이드 컨테이너 */
+  .label-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .label-btn { border: 2px solid transparent; border-radius: 8px; padding: 8px 4px; font-size: 0.76rem; font-weight: 600; cursor: pointer; background: #2d3748; color: #e2e8f0; transition: all 0.15s; text-align: center; }
+  .label-btn.selected { border-color: #3b82f6; background: #1d4ed8; color: #fff; box-shadow: 0 0 10px rgba(29,78,216,0.5); }
+  .label-btn:hover { background: #374151; }
+
+  /* 결과 세션 마킹 가이드 */
+  .result-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .result-btn { border: 2px solid transparent; border-radius: 8px; padding: 8px 4px; font-size: 0.74rem; font-weight: 600; cursor: pointer; background: #2d3748; color: #e2e8f0; transition: all 0.15s; }
+  .result-btn.selected { border-color: #f59e0b; background: #92400e; color: #fff; }
+  .result-btn[data-result="normal"].selected { border-color: #10b981; background: #064e3b; }
+
+  /* 센서 대시보드 뷰어 */
+  .sensor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .sensor-item { background: #0f1117; border-radius: 6px; padding: 6px 8px; border: 1px solid #22293a; }
+  .sensor-item .key { font-size: 0.65rem; color: #64748b; letter-spacing: 0.5px; }
+  .sensor-item .val { font-size: 1rem; font-weight: 700; color: #f1f5f9; margin-top: 2px; }
+  .sensor-item .val.warn { color: #ef4444; text-shadow: 0 0 8px rgba(239,68,68,0.3); }
+
+  /* 실시간 알림 로그 */
+  #alerts { margin-top: 10px; max-height: 80px; overflow-y: auto; background: rgba(0,0,0,0.2); padding: 4px; border-radius: 6px; }
+  .alert-msg { color: #f43f5e; font-size: 0.74rem; margin-bottom: 3px; font-weight: 600; border-left: 2px solid #f43f5e; padding-left: 4px; }
+
+  /* 데이터 스트림 트리거 스위치 */
+  .rec-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+  #btn-rec-start { background: #16a34a; border: none; color: white; padding: 10px 16px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; font-weight: bold; }
+  #btn-rec-stop { background: #dc2626; border: none; color: white; padding: 10px 16px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; font-weight: bold; }
+  .rec-status { font-size: 0.78rem; }
+  .rec-status.on { color: #4ade80; font-weight: bold; animation: blink 1s infinite alternate; }
+  .rec-status.off { color: #64748b; }
+  @keyframes blink { from { opacity: 0.4; } to { opacity: 1; } }
+  #row-count { font-size: 0.82rem; color: #94a3b8; font-weight: bold; }
+
+  /* 웹캠 가동 스크린 */
+  .camera-section { margin-top: 12px; }
+  .camera-card { background: #1e2433; border-radius: 10px; padding: 14px; border: 1px solid #283046; }
+  #camera-stream { max-width: 100%; border-radius: 6px; display: block; border: 1px solid #334155; }
+  #no-camera-msg { display: none; color: #64748b; text-align: center; padding: 30px 0; font-size: 0.85rem; border: 1px dashed #334155; border-radius: 6px; }
+
+  /* 품질 정합성 마킹 모달 레이어 */
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 100; align-items: center; justify-content: center; backdrop-filter: blur(2px); }
+  .modal-overlay.open { display: flex; }
+  .modal-box { background: #1e2433; border: 1px solid #475569; border-radius: 12px; padding: 20px; width: 320px; max-width: 90vw; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+  .modal-box h3 { font-size: 0.95rem; color: #7dd3fc; margin-bottom: 14px; text-align: center; font-weight: 700; }
+  .modal-result-btn { display: block; width: 100%; margin-bottom: 8px; padding: 10px 14px; border: 2px solid #334155; border-radius: 8px; background: #2d3748; color: #e2e8f0; font-size: 0.82rem; font-weight: 600; cursor: pointer; text-align: left; transition: all 0.15s; }
+  .modal-result-btn:hover { border-color: #3b82f6; background: #1d4ed8; color: #fff; }
+  .modal-result-btn:last-child { margin-bottom: 0; }
+
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 600px) { .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<div class="top-bar">
+  <h1>⚙ INSITE AI 최적화 데이터 수집 허브</h1>
+  
+  <div style="display:flex; align-items:center; gap:10px;">
+    <div class="mode-group">
+      <button class="mode-select-btn active-safe" id="ui-btn-safe" onclick="changeMode('SAFE')">🛡 SAFE</button>
+      <button class="mode-select-btn" id="ui-btn-fast" onclick="changeMode('FAST')">⚡ FAST</button>
+    </div>
+    <button id="btn-calib" onclick="startCalib()">🔧 시스템 영점 정렬</button>
+  </div>
+</div>
+
+<div id="calib-banner">
+  <span id="calib-msg">교정 대기 중...</span>
+  <div id="calib-result-area">
+    <h3>교정 결과 레지스터</h3>
+    <div class="calib-row"><span class="ck">HX711 중량 영점 필터</span><span class="cv" id="cr-hx711">—</span></div>
+    <div class="calib-row"><span class="ck">IMU 수평 오프셋 피팅 (°)</span><span class="cv" id="cr-pitch">—</span></div>
+    <div class="calib-row"><span class="ck">IMU 수평 롤 오프셋 (°)</span><span class="cv" id="cr-roll">—</span></div>
+    <div class="calib-row"><span class="ck">초음파 가이드 기준선 (cm)</span><span class="cv" id="cr-sonic">—</span></div>
+  </div>
+</div>
+
+<div class="grid">
+
+  <div class="card">
+    <h2>원격 실시간 매뉴얼 핸들 (방향키 바인딩)</h2>
+    <div class="dpad">
+      <div class="empty"></div>
+      <button id="btn-fwd" onmousedown="sendCmd('forward')" onmouseup="sendCmd('stop')" ontouchstart="sendCmd('forward')" ontouchend="sendCmd('stop')">▲</button>
+      <div class="empty"></div>
+      <button id="btn-left" onmousedown="sendCmd('left')" onmouseup="sendCmd('stop')" ontouchstart="sendCmd('left')" ontouchend="sendCmd('stop')">◀</button>
+      <button id="btn-stop" onclick="sendCmd('stop')">■</button>
+      <button id="btn-right" onmousedown="sendCmd('right')" onmouseup="sendCmd('stop')" ontouchstart="sendCmd('right')" ontouchend="sendCmd('stop')">▶</button>
+      <div class="empty"></div>
+      <button id="btn-bwd" onmousedown="sendCmd('backward')" onmouseup="sendCmd('stop')" ontouchstart="sendCmd('backward')" ontouchend="sendCmd('stop')">▼</button>
+      <div class="empty"></div>
+    </div>
+    <div class="speed-row">
+      <label>출력 가이드</label>
+      <input type="range" id="speed-slider" min="0" max="100" step="10" value="50" oninput="onSpeedChange(this.value)">
+      <span id="speed-val">50%</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>표준 학습 환경 레이블 (OBS_ENC 맵핑 정합 보장)</h2>
+    <div class="label-grid">
+      <button class="label-btn selected" data-label="정상 평지" onclick="setLabel(this)">정상 평지</button>
+      <button class="label-btn" data-label="10도 언덕" onclick="setLabel(this)">10도 언덕</button>
+      <button class="label-btn" data-label="20도 언덕" onclick="setLabel(this)">20도 언덕</button>
+      <button class="label-btn" data-label="10도 내리막" onclick="setLabel(this)">10도 내리막</button>
+      <button class="label-btn" data-label="20도 내리막" onclick="setLabel(this)">20도 내리막</button>
+      <button class="label-btn" data-label="비닐 노면" onclick="setLabel(this)">비닐 노면</button>
+      <button class="label-btn" data-label="1cm 방지턱" onclick="setLabel(this)">1cm 방지턱</button>
+      <button class="label-btn" data-label="2cm 방지턱" onclick="setLabel(this)">2cm 방지턱</button>
+    </div>
+
+    <h2 style="margin-top:12px;">결과 레이블 타겟 마킹 (세션 종료 시 자동 래칭 인터럽트)</h2>
+    <div class="result-grid">
+      <button class="result-btn selected" data-result="normal" onclick="setResult(this)">✓ 정상 통과</button>
+      <button class="result-btn" data-result="hill_fail" onclick="setResult(this)">✗ 등판 실패</button>
+      <button class="result-btn" data-result="slip" onclick="setResult(this)">⚡ 슬립 발생</button>
+      <button class="result-btn" data-result="impact" onclick="setResult(this)">💥 충격 과다</button>
+      <button class="result-btn" data-result="cautious_pass" onclick="setResult(this)">△ 주의 통과</button>
+    </div>
+    <p style="font-size:0.65rem; color:#64748b; margin-top:6px;">세션 종료 시 선택한 타겟 상태가 해당 타임 스탬프 블록 전체에 강제 매핑됩니다.</p>
+  </div>
+
+  <div class="card">
+    <h2>스토리지 스트림 엔진</h2>
+    <div class="rec-row">
+      <button id="btn-rec-start" onclick="startRec()">● 수집 시작</button>
+      <button id="btn-rec-stop" onclick="stopRec()">■ 세션 종료</button>
+      <span id="rec-status" class="rec-status off">대기 중</span>
+    </div>
+    <div id="row-count">수집 볼륨: 0 행</div>
+
+    <h2 style="margin-top:10px;">실시간 하드웨어 텔레메트리 레지스터</h2>
+    <div class="sensor-grid">
+      <div class="sensor-item"><div class="key">pitch (°)</div><div class="val" id="s-pitch">—</div></div>
+      <div class="sensor-item"><div class="key">pitch_delta</div><div class="val" id="s-delta">—</div></div>
+      <div class="sensor-item"><div class="key">weight (g)</div><div class="val" id="s-weight">—</div></div>
+      <div class="sensor-item"><div class="key">sonic (cm)</div><div class="val" id="s-sonic">—</div></div>
+      <div class="sensor-item"><div class="key">accel_x (m/s²)</div><div class="val" id="s-ax">—</div></div>
+      <div class="sensor-item"><div class="key">accel_y (m/s²)</div><div class="val" id="s-ay">—</div></div>
+      <div class="sensor-item"><div class="key">accel_z (m/s²)</div><div class="val" id="s-az">—</div></div>
+      <div class="sensor-item"><div class="key">accel_z_delta</div><div class="val" id="s-zdelta">—</div></div>
+    </div>
+    <div id="alerts"></div>
+  </div>
+
+</div>
+
+<div class="camera-section">
+  <div class="camera-card">
+    <h2>실시간 웹캠 감시 스크린 (/video_feed)</h2>
+    <img id="camera-stream" src="/video_feed" alt="Webcam Stream" onerror="onCameraError()">
+    <div id="no-camera-msg">📷 비디오 소스 인터페이스 단선 (V4L2 할당 정보 교차 모니터링 요망)</div>
+  </div>
+</div>
+
+<div id="stop-modal" class="modal-overlay">
+  <div class="modal-box">
+    <h3>이번 수집 블록 전체의 최종 주행 결과를 확정 마킹하세요</h3>
+    <button class="modal-result-btn" onclick="confirmStop('normal')">✓ 정상 통과 (normal)</button>
+    <button class="modal-result-btn" onclick="confirmStop('cautious_pass')">△ 주의 통과 (cautious_pass)</button>
+    <button class="modal-result-btn" onclick="confirmStop('hill_fail')">✗ 등판 실패 (hill_fail)</button>
+    <button class="modal-result-btn" onclick="confirmStop('slip')">⚡ 슬립 발생 (slip)</button>
+    <button class="modal-result-btn" onclick="confirmStop('impact')">💥 충격 과다 (impact)</button>
+  </div>
+</div>
+
+<script>
+const socket = io();
+let currentSpeed = 50;
+let activeDir = null;
+
+// [추가] 사용자가 조종 모드를 변경할 때 소켓 이벤트를 전송하는 신규 메서드
+function changeMode(mode) {
+  socket.emit("set_mode", { mode: mode });
+}
+
+socket.on("calibration_status", d => {
+  const banner = document.getElementById("calib-banner");
+  banner.style.display = "block";
+  document.getElementById("calib-msg").textContent = "🔧 하드웨어 캘리브레이션 튜닝 중... " + (d.msg || "");
+  document.getElementById("calib-result-area").style.display = "none";
+});
+
+socket.on("calibration_done", d => {
+  document.getElementById("calib-msg").textContent = "✅ 영점 동기화 레지스터 캐싱 완료";
+  document.getElementById("cr-hx711").textContent = d.hx711_tare ?? "—";
+  document.getElementById("cr-pitch").textContent = d.imu_pitch_zero ?? "—";
+  document.getElementById("cr-roll").textContent = d.imu_roll_zero ?? "—";
+  document.getElementById("cr-sonic").textContent = d.sonic_baseline_cm ?? "—";
+  document.getElementById("calib-result-area").style.display = "block";
+  document.getElementById("btn-calib").disabled = false;
+  document.getElementById("btn-calib").textContent = "🔧 시스템 영점 정렬";
+});
+
+socket.on("sensor_update", d => {
+  setText("s-pitch", d.pitch != null ? d.pitch.toFixed(2) : "—");
+  setText("s-delta", d.pitch_delta != null ? d.pitch_delta.toFixed(3) : "—");
+  setText("s-weight", d.weight != null ? d.weight.toFixed(1) : "—");
+  setText("s-sonic", d.sonic != null ? d.sonic.toFixed(1) : "—");
+  setText("s-ax", d.accel_x != null ? d.accel_x.toFixed(3) : "—");
+  setText("s-ay", d.accel_y != null ? d.accel_y.toFixed(3) : "—");
+  setText("s-az", d.accel_z != null ? d.accel_z.toFixed(3) : "—");
+  setText("s-zdelta", d.accel_z_delta != null ? d.accel_z_delta.toFixed(3) : "—");
+
+  setWarn("s-delta", d.pitch_delta != null && Math.abs(d.pitch_delta) > 3.0);
+  setWarn("s-zdelta", d.accel_z_delta != null && Math.abs(d.accel_z_delta) > 4.0);
+
+  // 백엔드에서 전송되는 user_mode와 전면 UI 버튼 동기화 락킹
+  if (d.user_mode) {
+    const isFast = d.user_mode.toUpperCase() === 'FAST';
+    document.getElementById('ui-btn-safe').className = 'mode-select-btn' + (!isFast ? ' active-safe' : '');
+    document.getElementById('ui-btn-fast').className = 'mode-select-btn' + (isFast ? ' active-fast' : '');
+  }
+
+  const alertBox = document.getElementById("alerts");
+  alertBox.innerHTML = "";
+  if (d.alerts && d.alerts.length) {
+    d.alerts.forEach(a => {
+      const p = document.createElement("p");
+      p.className = "alert-msg";
+      p.textContent = a;
+      alertBox.appendChild(p);
+    });
+  }
+
+  const recEl = document.getElementById("rec-status");
+  if (d.recording) {
+    recEl.textContent = "● ENGINE RUNNING";
+    recEl.className = "rec-status on";
+  } else {
+    recEl.textContent = "대기 중";
+    recEl.className = "rec-status off";
+  }
+  document.getElementById("row-count").textContent = `수집 볼륨: ${d.row_count ?? 0} 행`;
+});
+
+function setText(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
+function setWarn(id, warn) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.toggle("warn", warn);
+}
+
+function sendCmd(direction) {
+  socket.emit("motor_cmd", { direction, speed: currentSpeed });
+  activeDir = direction;
+  ["btn-fwd","btn-bwd","btn-left","btn-right","btn-stop"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove("active");
+  });
+  const map = { forward:"btn-fwd", backward:"btn-bwd", left:"btn-left", right:"btn-right", stop:"btn-stop" };
+  const activeBtn = document.getElementById(map[direction]);
+  if (activeBtn) activeBtn.classList.add("active");
+}
+
+function onSpeedChange(val) {
+  currentSpeed = parseInt(val);
+  document.getElementById("speed-val").textContent = val + "%";
+  if (activeDir && activeDir !== "stop") { sendCmd(activeDir); }
+}
+
+const keyMap = { ArrowUp:"forward", ArrowDown:"backward", ArrowLeft:"left", ArrowRight:"right", " ":"stop" };
+const keysDown = {};
+
+document.addEventListener("keydown", e => {
+  const dir = keyMap[e.key];
+  if (!dir) return;
+  e.preventDefault();
+  if (!keysDown[e.key]) {
+    keysDown[e.key] = true;
+    sendCmd(dir);
+  }
+});
+
+document.addEventListener("keyup", e => {
+  const dir = keyMap[e.key];
+  if (!dir) return;
+  delete keysDown[e.key];
+  if (dir !== "stop") sendCmd("stop");
+});
+
+function setLabel(btn) {
+  document.querySelectorAll(".label-btn").forEach(b => b.classList.remove("selected"));
+  btn.classList.add("selected");
+  socket.emit("set_label", { label: btn.dataset.label });
+}
+
+function setResult(btn) {
+  document.querySelectorAll(".result-btn").forEach(b => b.classList.remove("selected"));
+  btn.classList.add("selected");
+  socket.emit("set_result", { result: btn.dataset.result });
+}
+
+function startRec() { socket.emit("start_recording"); }
+function stopRec() { document.getElementById("stop-modal").classList.add("open"); }
+
+function confirmStop(result) {
+  document.getElementById("stop-modal").classList.remove("open");
+  socket.emit("stop_recording_with_result", { result });
+}
+
+socket.on("recording_state", d => {
+  const recEl = document.getElementById("rec-status");
+  if (d.recording) {
+    recEl.textContent = "● ENGINE RUNNING";
+    recEl.className = "rec-status on";
+  } else {
+    recEl.textContent = "대기 중";
+    recEl.className = "rec-status off";
+  }
+});
+
+function startCalib() {
+  const btn = document.getElementById("btn-calib");
+  btn.disabled = true;
+  btn.textContent = "조정 스캔 중...";
+  document.getElementById("calib-result-area").style.display = "none";
+  document.getElementById("calib-msg").textContent = "영점 초기화 프로세스 개시...";
+  document.getElementById("calib-banner").style.display = "block";
+  socket.emit("start_calibration");
+}
+
+function onCameraError() {
+  const img = document.getElementById("camera-stream");
+  setTimeout(() => { img.src = "/video_feed?t=" + Date.now(); }, 500);
+}
+</script>
+</body>
+</html>

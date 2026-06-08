@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>INSITE · AGV AI CONTROL</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Barlow+Condensed:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --bg0:       #080a0d;
+  --bg1:       #0c0f14;
+  --bg2:       #111520;
+  --bg3:       #161c28;
+  --bg4:       #1c2333;
+  --border:    #1f2940;
+  --border2:   #283450;
+  --cyan:      #00d4ff;
+  --cyan-dim:  rgba(0,212,255,0.12);
+  --cyan-glow: rgba(0,212,255,0.35);
+  --green:     #00e676;
+  --yellow:    #ffcc02;
+  --orange:    #ff9100;
+  --red:       #ff3d3d;
+  --red-dim:   rgba(255,61,61,0.15);
+  --text0:     #e8eef8;
+  --text1:     #8a9ab8;
+  --text2:     #3d4f6e;
+  --mono:      'JetBrains Mono', monospace;
+  --label:     'Barlow Condensed', sans-serif;
+  --hdr-h:     44px;
+}
+
+*,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
+html,body {
+  height:100%; background:var(--bg0); color:var(--text0);
+  font-family:var(--mono); font-size:13px;
+  overflow:hidden; -webkit-font-smoothing:antialiased;
+}
+body::after {
+  content:''; position:fixed; inset:0; pointer-events:none; z-index:9999;
+  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.05) 2px,rgba(0,0,0,.05) 4px);
+}
+
+/* ── HEADER ── */
+header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:0 18px; height:var(--hdr-h);
+  background:var(--bg1); border-bottom:1px solid var(--border);
+  flex-shrink:0; position:relative;
+}
+header::before {
+  content:''; position:absolute; top:0; left:0; right:0; height:2px;
+  background:linear-gradient(90deg,transparent,var(--cyan),transparent);
+}
+.logo { font-family:var(--label); font-size:18px; font-weight:700;
+        letter-spacing:.18em; color:var(--cyan); text-shadow:0 0 18px var(--cyan-glow); }
+.logo em { font-style:normal; font-weight:300; font-size:11px;
+           color:var(--text1); letter-spacing:.08em; margin-left:10px; }
+.hdr-right { display:flex; align-items:center; gap:12px; }
+.conn { display:flex; align-items:center; gap:6px; font-size:10px;
+        color:var(--text2); letter-spacing:.1em; font-family:var(--label); }
+.conn-dot { width:7px; height:7px; border-radius:50%;
+            background:var(--red); box-shadow:0 0 5px var(--red); transition:all .3s; }
+.conn-dot.live { background:var(--green); box-shadow:0 0 8px var(--green); }
+.hdr-clock { font-size:11px; color:var(--text2); letter-spacing:.06em; min-width:60px; text-align:right; }
+
+/* ── LAYOUT ── */
+.layout {
+  display:grid; grid-template-columns:1fr 320px;
+  height:calc(100vh - var(--hdr-h)); overflow:hidden;
+}
+.left {
+  display:grid; grid-template-rows:1fr auto;
+  border-right:1px solid var(--border); overflow:hidden;
+}
+
+/* ── CAMERA ── */
+.cam-wrap {
+  position:relative; background:#020408; overflow:hidden;
+  border-bottom:1px solid var(--border);
+}
+.cam-wrap img { width:100%; height:100%; object-fit:contain; display:block; }
+.cam-overlay {
+  position:absolute; inset:0; pointer-events:none;
+  background:linear-gradient(to bottom,rgba(8,10,13,.5) 0%,transparent 15%,transparent 85%,rgba(8,10,13,.5) 100%);
+}
+.cam-corner { position:absolute; width:14px; height:14px; border-color:var(--yellow); border-style:solid; opacity:.6; }
+.cam-corner.tl { top:10px; left:10px; border-width:1px 0 0 1px; }
+.cam-corner.tr { top:10px; right:10px; border-width:1px 1px 0 0; }
+.cam-corner.bl { bottom:10px; left:10px; border-width:0 0 1px 1px; }
+.cam-corner.br { bottom:10px; right:10px; border-width:0 1px 1px 0; }
+.cam-tag {
+  position:absolute; top:10px; left:24px;
+  font-size:9px; letter-spacing:.14em; color:var(--yellow);
+  font-family:var(--label); opacity:.7;
+}
+
+/* ── CONTROL STRIP (bottom of left) ── */
+.ctrl-strip {
+  background:var(--bg1); padding:10px 14px;
+  display:flex; flex-direction:column; gap:8px;
+}
+.ctrl-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+
+/* ── BUTTON SYSTEM ── */
+.btn {
+  font-family:var(--label); font-size:11px; font-weight:600;
+  letter-spacing:.08em; padding:6px 12px; border-radius:2px; cursor:pointer;
+  border:1px solid var(--border2); background:var(--bg3); color:var(--text0);
+  transition:all .15s; white-space:nowrap; flex-shrink:0;
+}
+.btn:hover  { background:var(--bg4); border-color:var(--cyan); color:var(--cyan); }
+.btn:active { transform:scale(.97); }
+.btn-cyan   { background:rgba(0,212,255,.1); border-color:var(--cyan); color:var(--cyan); }
+.btn-cyan:hover { background:rgba(0,212,255,.2); }
+.btn-green  { background:rgba(0,230,118,.08); border-color:var(--green); color:var(--green); }
+.btn-green:hover { background:rgba(0,230,118,.18); }
+.btn-red    { border-color:rgba(255,61,61,.4); color:var(--red); }
+.btn-red:hover { background:var(--red-dim); }
+.btn-yellow { border-color:rgba(255,204,2,.4); color:var(--yellow); }
+.btn-yellow:hover { background:rgba(255,204,2,.1); }
+.btn-orange { border-color:rgba(255,145,0,.4); color:var(--orange); }
+.btn-orange:hover { background:rgba(255,145,0,.1); }
+.btn-active { background:rgba(0,230,118,.15) !important; border-color:var(--green) !important; color:var(--green) !important; }
+.btn-mode-active { box-shadow:0 0 8px var(--cyan-glow); }
+
+/* drive mode label */
+.ctrl-label { font-family:var(--label); font-size:9px; color:var(--text2);
+              letter-spacing:.15em; text-transform:uppercase; white-space:nowrap; }
+
+/* ── RIGHT PANEL ── */
+.right {
+  display:flex; flex-direction:column;
+  background:var(--bg1); overflow-y:auto; overflow-x:hidden;
+}
+.right::-webkit-scrollbar { width:3px; }
+.right::-webkit-scrollbar-thumb { background:var(--border2); }
+
+.sec-hdr {
+  font-family:var(--label); font-size:9px; font-weight:600;
+  letter-spacing:.2em; color:var(--text2); text-transform:uppercase;
+  padding:8px 14px 6px; border-bottom:1px solid var(--border);
+  flex-shrink:0;
+}
+
+/* ── SENSOR GRID ── */
+.sensor-grid {
+  display:grid; grid-template-columns:1fr 1fr;
+  border-bottom:1px solid var(--border);
+}
+.s-card { padding:10px 12px; }
+.s-card + .s-card { border-left:1px solid var(--border); }
+.s-card:nth-child(3), .s-card:nth-child(4) { border-top:1px solid var(--border); }
+.card-lbl { font-family:var(--label); font-size:8px; color:var(--text2);
+            letter-spacing:.15em; text-transform:uppercase; margin-bottom:5px; }
+.big-num { font-family:var(--label); font-size:26px; font-weight:700;
+           color:var(--text0); line-height:1; }
+.big-unit { font-size:11px; color:var(--text1); font-weight:400; margin-left:2px; }
+
+/* ── FSM STATE PANEL ── */
+.fsm-panel { border-bottom:1px solid var(--border); padding:10px 14px; flex-shrink:0; }
+.fsm-state-badge {
+  font-family:var(--label); font-size:22px; font-weight:700;
+  letter-spacing:.06em; color:var(--cyan);
+  padding:6px 0 4px; border-radius:2px; text-align:center;
+  transition:color .3s;
+}
+.fsm-route-row {
+  display:flex; justify-content:space-between; align-items:center; margin-top:6px;
+}
+.fsm-key  { font-size:9px; color:var(--text2); letter-spacing:.08em; font-family:var(--label); }
+.fsm-val  { font-size:11px; color:var(--text0); letter-spacing:.04em; }
+.fsm-val.route-a { color:var(--cyan); }
+.fsm-val.route-b { color:var(--yellow); }
+.fsm-val.route-c { color:var(--green); }
+.fsm-val.route-dead { color:var(--red); animation:blink .5s infinite; }
+.fsm-val.ok   { color:var(--green); }
+.fsm-val.warn { color:var(--yellow); }
+.fsm-val.crit { color:var(--red); }
+
+/* ── DRIVE MODE PANEL ── */
+.mode-panel {
+  border-bottom:1px solid var(--border); padding:10px 14px;
+  flex-shrink:0;
+}
+.mode-row { display:flex; gap:8px; margin-bottom:8px; }
+.mode-btn {
+  flex:1; padding:8px; font-family:var(--label); font-size:13px; font-weight:700;
+  letter-spacing:.1em; border-radius:2px; cursor:pointer;
+  border:1px solid var(--border2); background:var(--bg3); color:var(--text1);
+  transition:all .2s;
+}
+.mode-btn:hover { border-color:var(--cyan); color:var(--cyan); }
+.mode-btn.selected-fast { background:rgba(0,212,255,.1); border-color:var(--cyan); color:var(--cyan); box-shadow:0 0 8px var(--cyan-glow); }
+.mode-btn.selected-safe { background:rgba(0,230,118,.1); border-color:var(--green); color:var(--green); box-shadow:0 0 8px rgba(0,230,118,.3); }
+.drive-row { display:flex; gap:8px; }
+.drive-btn {
+  flex:1; padding:8px; font-family:var(--label); font-size:13px; font-weight:700;
+  letter-spacing:.1em; border-radius:2px; cursor:pointer;
+  border:1px solid var(--border2); background:var(--bg3); color:var(--text1);
+  transition:all .2s;
+}
+.drive-btn.start { border-color:rgba(0,230,118,.5); color:var(--green); }
+.drive-btn.start:hover { background:rgba(0,230,118,.1); }
+.drive-btn.start.running { background:rgba(0,230,118,.15); animation:pulse-green 1.2s infinite; }
+.drive-btn.stop  { border-color:rgba(255,61,61,.4); color:var(--red); }
+.drive-btn.stop:hover { background:var(--red-dim); }
+@keyframes pulse-green { 0%,100%{box-shadow:0 0 4px rgba(0,230,118,.3)} 50%{box-shadow:0 0 14px rgba(0,230,118,.7)} }
+
+/* ── OBSTACLE INJECTION PANEL ── */
+.obs-panel { border-bottom:1px solid var(--border); padding:10px 14px; flex-shrink:0; }
+.obs-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:6px; }
+.obs-btn {
+  padding:7px 6px; font-family:var(--label); font-size:10px; font-weight:600;
+  letter-spacing:.06em; border-radius:2px; cursor:pointer;
+  border:1px solid var(--border2); background:var(--bg3); color:var(--text1);
+  transition:all .15s; text-align:center;
+}
+.obs-btn:hover { border-color:var(--orange); color:var(--orange); background:rgba(255,145,0,.08); }
+.obs-btn.active { border-color:var(--orange); color:var(--orange); background:rgba(255,145,0,.15); box-shadow:0 0 6px rgba(255,145,0,.3); }
+.obs-btn.reset:hover { border-color:var(--text1); color:var(--text0); }
+.node-btn {
+  width:100%; padding:8px; font-family:var(--label); font-size:11px; font-weight:700;
+  letter-spacing:.1em; border-radius:2px; cursor:pointer;
+  border:1px solid rgba(0,212,255,.4); background:var(--bg3); color:var(--cyan);
+  transition:all .15s;
+}
+.node-btn:hover { background:var(--cyan-dim); box-shadow:0 0 8px var(--cyan-glow); }
+.node-btn:active { transform:scale(.97); }
+
+/* ── DEADLOCK PANEL ── */
+.deadlock-panel {
+  display:none;
+  border-bottom:1px solid var(--border); padding:10px 14px;
+  flex-shrink:0; background:rgba(255,61,61,.07);
+  border-left:3px solid var(--red);
+}
+.deadlock-panel.active { display:block; }
+.deadlock-title {
+  font-family:var(--label); font-size:11px; font-weight:700;
+  color:var(--red); letter-spacing:.12em; margin-bottom:6px;
+  animation:blink .6s infinite;
+}
+.deadlock-msg { font-size:9px; color:var(--text1); margin-bottom:8px; letter-spacing:.04em; }
+.chat-row { display:flex; gap:6px; }
+.chat-input {
+  flex:1; font-family:var(--mono); font-size:11px;
+  background:var(--bg0); border:1px solid var(--border2);
+  color:var(--text0); padding:6px 9px; border-radius:2px; outline:none;
+}
+.chat-input::placeholder { color:var(--text2); }
+.chat-input:focus { border-color:var(--red); }
+.chat-send {
+  padding:6px 12px; font-family:var(--label); font-size:11px; font-weight:700;
+  border-radius:2px; cursor:pointer; border:1px solid var(--red);
+  background:var(--red-dim); color:var(--red); letter-spacing:.06em; transition:all .15s;
+}
+.chat-send:hover { background:rgba(255,61,61,.3); }
+
+/* ── MOCK STATUS ROW ── */
+.mock-status-row {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:4px 14px 6px; border-bottom:1px solid var(--border); flex-shrink:0;
+}
+.mock-lbl { font-family:var(--label); font-size:8px; color:var(--text2); letter-spacing:.12em; }
+.mock-val { font-size:9px; color:var(--text1); letter-spacing:.04em; }
+.mock-val.injected { color:var(--orange); }
+
+/* ── TOAST ── */
+#toast {
+  position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
+  padding:8px 20px; border-radius:2px; font-size:11px; letter-spacing:.06em;
+  border:1px solid var(--border2); background:var(--bg3); color:var(--text0);
+  z-index:10000; pointer-events:none; opacity:0; transition:opacity .2s;
+  font-family:var(--label); font-weight:600; white-space:nowrap;
+}
+#toast.show { opacity:1; }
+#toast.ok   { border-color:var(--green);  color:var(--green); }
+#toast.err  { border-color:var(--red);    color:var(--red); }
+#toast.info { border-color:var(--cyan);   color:var(--cyan); }
+#toast.warn { border-color:var(--orange); color:var(--orange); }
+
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════ HEADER ════════════════════════════════ -->
+<header>
+  <div class="logo">INSITE<em>AGV AI CONTROL</em></div>
+  <div class="hdr-right">
+    <div class="conn">
+      <div class="conn-dot" id="conn-dot"></div>
+      <span id="conn-label">OFFLINE</span>
+    </div>
+    <div class="hdr-clock" id="clock"></div>
+  </div>
+</header>
+
+<div class="layout">
+
+  <!-- ═══════════════════════ LEFT: 카메라 + 컨트롤 스트립 ════════════════════ -->
+  <div class="left">
+
+    <!-- AI 전방 카메라 피드 -->
+    <div class="cam-wrap">
+      <img id="ai-cam" src="/ai_video_feed" alt="">
+      <div class="cam-overlay"></div>
+      <div class="cam-corner tl"></div><div class="cam-corner tr"></div>
+      <div class="cam-corner bl"></div><div class="cam-corner br"></div>
+      <div class="cam-tag">AI PERCEPTION CAM · ORBBEC ASTRA RGB · /ai_video_feed</div>
+    </div>
+
+    <!-- 하단 컨트롤 스트립 -->
+    <div class="ctrl-strip">
+
+      <!-- 장애물 주입 버튼 (4개) -->
+      <div class="ctrl-row">
+        <span class="ctrl-label">OBSTACLE INJ</span>
+        <button class="btn btn-yellow" onclick="injectObs('bump_3cm')" id="obs-3cm">3cm 방지턱 조우</button>
+        <button class="btn btn-red"    onclick="injectObs('bump_5cm')" id="obs-5cm">5cm 방지턱 조우</button>
+        <button class="btn btn-orange" onclick="injectObs('vinyl')"    id="obs-vinyl">비닐 노면 진입</button>
+        <button class="btn"            onclick="injectObs('reset')"    id="obs-reset">장애물 리셋</button>
+      </div>
+
+      <!-- 노드 감지 자극 버튼 -->
+      <div class="ctrl-row">
+        <span class="ctrl-label">NODE</span>
+        <button class="btn btn-cyan" onclick="triggerNode()">노드 감지 자극</button>
+        <span class="ctrl-label" style="margin-left:8px;">LOADCELL</span>
+        <button class="btn" onclick="tareLc()">TARE</button>
+      </div>
+
+      <!-- 키보드 수동 조작 안내 -->
+      <div class="ctrl-row">
+        <span class="ctrl-label">KEYBOARD</span>
+        <span style="font-size:9px;color:var(--text2);letter-spacing:.06em">
+          W/↑ 전진 &nbsp;·&nbsp; S/↓ 후진 &nbsp;·&nbsp; A/← 좌회전 &nbsp;·&nbsp; D/→ 우회전 &nbsp;·&nbsp; Space 정지
+        </span>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══════════════════════ RIGHT: 센서 / 제어 패널 ════════════════════════ -->
+  <div class="right">
+
+    <!-- 센서 그리드: 초음파, pitch, 로드셀, 속도 -->
+    <div class="sec-hdr">실시간 센서값</div>
+    <div class="sensor-grid">
+      <div class="s-card">
+        <div class="card-lbl">초음파 거리</div>
+        <div class="big-num" id="s-dist">--<span class="big-unit">cm</span></div>
+      </div>
+      <div class="s-card">
+        <div class="card-lbl">IMU PITCH</div>
+        <div class="big-num" id="s-pitch">--<span class="big-unit">°</span></div>
+      </div>
+      <div class="s-card">
+        <div class="card-lbl">로드셀 중량</div>
+        <div class="big-num" id="s-weight">--<span class="big-unit">g</span></div>
+      </div>
+      <div class="s-card">
+        <div class="card-lbl">현재 속도</div>
+        <div class="big-num" id="s-speed" style="color:var(--cyan)">0<span class="big-unit">%</span></div>
+      </div>
+    </div>
+
+    <!-- IMU 상세값: roll, yaw, 가속도 x/y/z -->
+    <div class="sec-hdr">IMU 상세</div>
+    <div class="sensor-grid">
+      <div class="s-card">
+        <div class="card-lbl">IMU ROLL</div>
+        <div class="big-num" id="s-roll">--<span class="big-unit">°</span></div>
+      </div>
+      <div class="s-card">
+        <div class="card-lbl">IMU YAW</div>
+        <div class="big-num" id="s-yaw">--<span class="big-unit">°</span></div>
+      </div>
+      <div class="s-card" style="border-top:1px solid var(--border)">
+        <div class="card-lbl">ACCEL X</div>
+        <div class="big-num" id="s-accel-x" style="font-size:20px">--<span class="big-unit">g</span></div>
+      </div>
+      <div class="s-card" style="border-top:1px solid var(--border)">
+        <div class="card-lbl">ACCEL Y</div>
+        <div class="big-num" id="s-accel-y" style="font-size:20px">--<span class="big-unit">g</span></div>
+      </div>
+      <div class="s-card" style="border-top:1px solid var(--border);grid-column:1/-1">
+        <div class="card-lbl">ACCEL Z</div>
+        <div class="big-num" id="s-accel-z" style="font-size:20px">--<span class="big-unit">g</span></div>
+      </div>
+    </div>
+
+    <!-- FSM 상태 패널 -->
+    <div class="sec-hdr">FSM 상태</div>
+    <div class="fsm-panel">
+      <div class="fsm-state-badge" id="fsm-state">IDLE</div>
+      <div class="fsm-route-row">
+        <span class="fsm-key">배정 경로</span>
+        <span class="fsm-val" id="fsm-route">UNKNOWN</span>
+      </div>
+      <div class="fsm-route-row">
+        <span class="fsm-key">주행 모드</span>
+        <span class="fsm-val" id="fsm-mode">SAFE</span>
+      </div>
+      <div class="fsm-route-row">
+        <span class="fsm-key">주행 상태</span>
+        <span class="fsm-val" id="fsm-driving">정지</span>
+      </div>
+    </div>
+
+    <!-- 주행 모드 + 시작/정지 패널 -->
+    <div class="sec-hdr">주행 제어</div>
+    <div class="mode-panel">
+      <div class="mode-row">
+        <button class="mode-btn" id="btn-fast" onclick="setMode('FAST')">⚡ FAST</button>
+        <button class="mode-btn selected-safe" id="btn-safe" onclick="setMode('SAFE')">🛡 SAFE</button>
+      </div>
+      <div class="drive-row">
+        <button class="drive-btn start" id="btn-start" onclick="startDrive()">▶ 주행 시작</button>
+        <button class="drive-btn stop"  id="btn-stop"  onclick="stopDrive()">■ 정지</button>
+      </div>
+    </div>
+
+    <!-- 현재 주입된 장애물 상태 표시 -->
+    <div class="mock-status-row">
+      <span class="mock-lbl">MOCK OBS</span>
+      <span class="mock-val" id="mock-status">None</span>
+    </div>
+
+    <!-- 데드락 경고 + 관리자 채팅창 (데드락 발생 시만 표시) -->
+    <div class="deadlock-panel" id="deadlock-panel">
+      <div class="deadlock-title">⚠ FATAL DEADLOCK — 모든 경로 차단됨</div>
+      <div class="deadlock-msg">관리자 명령을 입력하여 강제 기동 복구를 실행하십시오.</div>
+      <div class="chat-row">
+        <input class="chat-input" id="admin-input"
+               placeholder="관리자 명령 입력 (예: FORCE_RESUME)"
+               onkeypress="if(event.key==='Enter') sendAdmin()">
+        <button class="chat-send" onclick="sendAdmin()">SEND</button>
+      </div>
+    </div>
+
+  </div><!-- /right -->
+</div><!-- /layout -->
+
+<div id="toast"></div>
+
+<!-- ═══════════════════════════════════ SCRIPT ════════════════════════════════ -->
+<script>
+'use strict';
+
+const socket = io({ transports: ['websocket', 'polling'] });
+
+// ── 연결 상태 ────────────────────────────────────────────────────────────────
+socket.on('connect', () => {
+  document.getElementById('conn-dot').classList.add('live');
+  document.getElementById('conn-label').textContent = 'ONLINE';
+});
+socket.on('disconnect', () => {
+  document.getElementById('conn-dot').classList.remove('live');
+  document.getElementById('conn-label').textContent = 'OFFLINE';
+});
+
+// ── 센서 업데이트 ─────────────────────────────────────────────────────────────
+socket.on('sensor_update', (d) => {
+  // 초음파
+  const dist   = d.distance_cm ?? -1;
+  const distEl = document.getElementById('s-dist');
+  distEl.innerHTML = (dist < 0 ? '--' : dist) + '<span class="big-unit">cm</span>';
+  distEl.style.color = dist < 0 ? 'var(--text2)'
+                     : dist < 10  ? 'var(--red)'
+                     : dist < 50  ? 'var(--yellow)'
+                     : 'var(--text0)';
+
+  // IMU Pitch
+  const pitch   = d.pitch ?? 0;
+  const pitchEl = document.getElementById('s-pitch');
+  pitchEl.innerHTML = pitch + '<span class="big-unit">°</span>';
+  pitchEl.style.color = Math.abs(pitch) >= 15 ? 'var(--red)'
+                       : Math.abs(pitch) >= 7  ? 'var(--yellow)'
+                       : 'var(--text0)';
+
+  // IMU ROLL — 좌우 기울기 표시
+  const rollEl = document.getElementById('s-roll');
+  const roll   = d.imu_roll ?? 0;
+  rollEl.innerHTML   = roll + '<span class="big-unit">°</span>';
+  rollEl.style.color = Math.abs(roll) >= 15 ? 'var(--red)'
+                     : Math.abs(roll) >= 7  ? 'var(--yellow)'
+                     : 'var(--text0)';
+
+  // IMU YAW — 방위각 표시
+  const yawEl = document.getElementById('s-yaw');
+  yawEl.innerHTML   = (d.imu_yaw ?? 0).toFixed(1) + '<span class="big-unit">°</span>';
+  yawEl.style.color = 'var(--cyan)';
+
+  // 가속도 X/Y/Z (단위: g)
+  document.getElementById('s-accel-x').innerHTML = (d.accel_x ?? 0).toFixed(2) + '<span class="big-unit">g</span>';
+  document.getElementById('s-accel-y').innerHTML = (d.accel_y ?? 0).toFixed(2) + '<span class="big-unit">g</span>';
+  document.getElementById('s-accel-z').innerHTML = (d.accel_z ?? 0).toFixed(2) + '<span class="big-unit">g</span>';
+
+  // 중량
+  const wt   = d.weight_g ?? 0;
+  const wtEl = document.getElementById('s-weight');
+  wtEl.innerHTML = wt + '<span class="big-unit">g</span>';
+  wtEl.style.color = wt > 150 ? 'var(--red)' : wt > 100 ? 'var(--yellow)' : 'var(--text0)';
+
+  // 현재 속도
+  const spd   = d.speed ?? 0;
+  const spdEl = document.getElementById('s-speed');
+  spdEl.innerHTML = spd + '<span class="big-unit">%</span>';
+  spdEl.style.color = spd === 0 ? 'var(--text2)' : spd >= 50 ? 'var(--red)' : 'var(--cyan)';
+
+  // FSM 상태
+  const state   = d.fsm_state ?? 'IDLE';
+  const stateEl = document.getElementById('fsm-state');
+  stateEl.textContent = state;
+  stateEl.style.color = _fsmColor(state);
+
+  // 배정 경로
+  const routeEl = document.getElementById('fsm-route');
+  routeEl.textContent  = d.route ?? 'UNKNOWN';
+  routeEl.className    = 'fsm-val ' + _routeClass(d.route);
+
+  // 주행 모드
+  const modeEl  = document.getElementById('fsm-mode');
+  modeEl.textContent = d.drive_mode ?? 'SAFE';
+  modeEl.className   = 'fsm-val ' + (d.drive_mode === 'FAST' ? 'warn' : 'ok');
+
+  // 주행 상태
+  const drvEl   = document.getElementById('fsm-driving');
+  drvEl.textContent = d.driving ? '주행 중' : '정지';
+  drvEl.className   = 'fsm-val ' + (d.driving ? 'ok' : '');
+
+  // 시작 버튼 펄스 표시
+  document.getElementById('btn-start').classList.toggle('running', !!d.driving);
+
+  // mock_obs 상태 표시
+  const mockEl  = document.getElementById('mock-status');
+  const obs     = d.mock_obs ?? 'None';
+  mockEl.textContent = obs;
+  mockEl.className   = 'mock-val' + (obs !== 'None' ? ' injected' : '');
+
+  // 장애물 버튼 활성 상태 동기화
+  const obsKeys = ['3cm', '5cm', 'vinyl'];
+  const obsMap  = {'Bump_3cm': 'obs-3cm', 'Bump_5cm': 'obs-5cm', 'Vinyl': 'obs-vinyl'};
+  obsKeys.forEach(k => {
+    const id = 'obs-' + k;
+    document.getElementById(id)?.classList.remove('active');
+  });
+  if (obsMap[obs]) {
+    document.getElementById(obsMap[obs])?.classList.add('active');
+  }
+
+  // 모드 버튼 선택 상태
+  const mode = d.drive_mode ?? 'SAFE';
+  document.getElementById('btn-fast').className = 'mode-btn' + (mode === 'FAST' ? ' selected-fast' : '');
+  document.getElementById('btn-safe').className = 'mode-btn' + (mode === 'SAFE' ? ' selected-safe' : '');
+});
+
+// ── 데드락 경고 ───────────────────────────────────────────────────────────────
+socket.on('deadlock_alert', (d) => {
+  const panel = document.getElementById('deadlock-panel');
+  if (d.active) {
+    panel.classList.add('active');
+    showToast('⚠ DEADLOCK — 모든 경로 차단됨', 'err');
+  } else {
+    panel.classList.remove('active');
+    document.getElementById('admin-input').value = '';
+    showToast('데드락 해제 — 주행 복구됨', 'ok');
+  }
+});
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+socket.on('toast', (d) => {
+  const tmap = { success:'ok', error:'err', info:'info', ok:'ok', warn:'warn' };
+  showToast(d.msg, tmap[d.type] || 'info');
+});
+
+// ── 제어 함수들 ──────────────────────────────────────────────────────────────
+function setMode(mode) {
+  socket.emit('set_drive_mode', { mode });
+}
+function startDrive() {
+  socket.emit('start_drive');
+}
+function stopDrive() {
+  socket.emit('stop_drive');
+}
+function injectObs(type) {
+  socket.emit('inject_obstacle', { obs: type });
+}
+function triggerNode() {
+  socket.emit('trigger_node');
+}
+function sendAdmin() {
+  const cmd = document.getElementById('admin-input').value.trim();
+  if (!cmd) return;
+  socket.emit('admin_command', { command: cmd });
+}
+function tareLc() {
+  socket.emit('tare_loadcell');
+}
+
+// ── 유틸 ─────────────────────────────────────────────────────────────────────
+function _fsmColor(state) {
+  if (!state || state === 'IDLE') return 'var(--text1)';
+  if (state.includes('CRITICAL') || state.includes('DEADLOCK') || state.includes('WAITING'))
+    return 'var(--red)';
+  if (state.includes('CAUTIOUS') || state.includes('SAFE') || state.includes('REROUTING') || state.includes('GUARD'))
+    return 'var(--yellow)';
+  if (state.includes('HILL') || state.includes('FAST'))
+    return 'var(--orange)';
+  if (state === 'NORMAL_CRUISE')
+    return 'var(--green)';
+  return 'var(--cyan)';
+}
+function _routeClass(route) {
+  if (!route) return '';
+  if (route === 'ROUTE_A') return 'route-a';
+  if (route === 'ROUTE_B') return 'route-b';
+  if (route === 'ROUTE_C') return 'route-c';
+  if (route === 'DEADLOCK') return 'route-dead';
+  return '';
+}
+
+let _toastTimer = null;
+function showToast(msg, type = 'info') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'show ' + type;
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove('show'), 2400);
+}
+
+function updateClock() {
+  document.getElementById('clock').textContent =
+    new Date().toLocaleTimeString('ko-KR', { hour12: false });
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ── 키보드 수동 조작 (W/A/S/D + 방향키 + Space) ──────────────────────────
+// keydown → socket.emit('manual_move') → dashboard.py on_manual_move
+// → motor.forward / backward / rotate_left / rotate_right / stop
+// 방향키 + Space 만 바인딩 — W/A/S/D 미사용
+const KEY_DIR_MAP = {
+  'ArrowUp':    'forward',
+  'ArrowDown':  'backward',
+  'ArrowLeft':  'left',
+  'ArrowRight': 'right',
+  ' ': 'stop',
+};
+// 연속 keydown 이벤트(키 누름 유지) 중 중복 emit 억제용 집합
+const _pressedKeys = new Set();
+
+document.addEventListener('keydown', (e) => {
+  const dir = KEY_DIR_MAP[e.key];
+  if (!dir) return;
+  e.preventDefault();                  // 페이지 스크롤 방지
+  if (_pressedKeys.has(e.key)) return; // 키 반복 이벤트 억제
+  _pressedKeys.add(e.key);
+  socket.emit('manual_move', { direction: dir, speed: 40 });
+});
+
+document.addEventListener('keyup', (e) => {
+  if (!KEY_DIR_MAP[e.key]) return;
+  e.preventDefault();
+  _pressedKeys.delete(e.key);
+  // 키를 떼면 정지 명령 전송
+  socket.emit('manual_move', { direction: 'stop', speed: 0 });
+});
+</script>
+</body>
+</html>

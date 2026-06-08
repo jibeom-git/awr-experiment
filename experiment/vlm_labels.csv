@@ -1,0 +1,24 @@
+timestamp,photo_path,gemini_type,gemini_height_cm,gemini_slope_deg,gemini_surface,actual_height_cm,actual_slope_deg,actual_surface,label,note
+20260606_194653,/home/pi/insite/experiment/obstacle_photos/obstacle_20260606_194653.jpg,bump,2.0,0.0,normal,1.0,0.0,rough,normal,1cm 방지턱
+20260606_203410,/home/pi/insite/experiment/obstacle_photos/obstacle_20260606_203410.jpg,bump,2.0,0.0,normal,2.0,0.0,rough,normal,
+20260606_203436,/home/pi/insite/experiment/obstacle_photos/obstacle_20260606_203436.jpg,bump,2.0,0.0,normal,2.0,0.0,rough,normal,
+20260606_203556,/home/pi/insite/experiment/obstacle_photos/obstacle_20260606_203556.jpg,bump,5.0,0.0,normal,2.0,0.0,rough,normal,
+20260606_203628,/home/pi/insite/experiment/obstacle_photos/obstacle_20260606_203628.jpg,bump,2.0,0.0,normal,2.0,0.0,rough,normal,
+20260606_203656,/home/pi/insite/experiment/obstacle_photos/obstacle_20260606_203656.jpg,bump,2.0,0.0,normal,1.0,0.0,rough,normal,
+20260606_203717,/home/pi/insite/experiment/obstacle_photos/obstacle_20260606_203717.jpg,bump,2.0,0.0,normal,1.0,0.0,rough,normal,
+20260606_203807,/home/pi/insite/experiment/obstacle_photos/obstacle_20260606_203807.jpg,bump,2.0,0.0,normal,2.0,0.0,rough,normal,
+20260606_203855,/home/pi/insite/experiment/obstacle_photos/obstacle_20260606_203855.jpg,bump,2.0,0.0,normal,1.0,0.0,rough,normal,
+20260606_204011,/home/pi/insite/experiment/obstacle_photos/obstacle_20260606_204011.jpg,bump,1.5,0.0,vinyl,1.0,0.0,rough,normal,
+20260606_204046,/home/pi/insite/experiment/obstacle_photos/obstacle_20260606_204046.jpg,bump,2.5,0.0,normal,1.0,0.0,rough,normal,
+20260606_204132,/home/pi/insite/experiment/obstacle_photos/obstacle_20260606_204132.jpg,bump,2.0,0.0,normal,2.0,0.0,rough,normal,
+20260606_204203,/home/pi/insite/experiment/obstacle_photos/obstacle_20260606_204203.jpg,bump,2.0,0.0,normal,2.0,0.0,rough,normal,
+20260606_204300,/home/pi/insite/experiment/obstacle_photos/obstacle_20260606_204300.jpg,bump,2.0,0.0,normal,2.0,0.0,rough,normal,
+20260606_204343,/home/pi/insite/experiment/obstacle_photos/obstacle_20260606_204343.jpg,bump,2.0,0.0,vinyl,1.0,0.0,rough,normal,
+20260606_204427,/home/pi/insite/experiment/obstacle_photos/obstacle_20260606_204427.jpg,bump,2.0,0.0,normal,1.0,0.0,rough,normal,
+20260606_204506,/home/pi/insite/experiment/obstacle_photos/obstacle_20260606_204506.jpg,bump,5.0,0.0,normal,1.0,0.0,rough,normal,
+20260606_204521,/home/pi/insite/experiment/obstacle_photos/obstacle_20260606_204521.jpg,bump,2.0,0.0,normal,1.0,0.0,rough,normal,
+20260606_205125,/home/pi/insite/experiment/obstacle_photos/obstacle_20260606_205125.jpg,bump,1.0,0.0,normal,0.0,0.0,vinyl,slip,비닐
+20260606_205233,/home/pi/insite/experiment/obstacle_photos/obstacle_20260606_205233.jpg,bump,5.0,0.0,normal,0.0,0.0,vinyl,slip,비닐
+20260606_205300,/home/pi/insite/experiment/obstacle_photos/obstacle_20260606_205300.jpg,bump,5.0,0.0,normal,0.0,0.0,vinyl,slip,비닐
+20260606_205321,/home/pi/insite/experiment/obstacle_photos/obstacle_20260606_205321.jpg,bump,5.0,0.0,normal,0.0,0.0,vinyl,slip,비닐
+20260606_205340,/home/pi/insite/experiment/obstacle_photos/obstacle_20260606_205340.jpg,bump,5.0,0.0,normal,0.0,0.0,vinyl,slip,비닐

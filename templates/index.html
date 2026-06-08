@@ -1,0 +1,952 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>INSITE AGV AI Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+<!-- 실시간 센서 그래프용 Chart.js CDN -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117; --card: #161b22; --border: #21262d;
+    --text: #c9d1d9; --muted: #6e7681; --blue: #58a6ff;
+    --green: #3fb950; --red: #f85149; --yellow: #d29922;
+    --purple: #bc8cff; --orange: #ff7b72;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', monospace; padding: 12px; }
+
+  /* ─ 상단 헤더 ─ */
+  .top-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .top-bar h1 { font-size: 1rem; color: var(--blue); letter-spacing: 1px; flex: 1; min-width: 200px; }
+
+  /* ─ 버튼 공통 ─ */
+  button { border: none; border-radius: 6px; cursor: pointer; font-size: 0.8rem;
+           padding: 7px 14px; transition: opacity 0.15s; }
+  button:hover { opacity: 0.85; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-blue   { background: #1f6feb; color: #fff; }
+  .btn-green  { background: #238636; color: #fff; }
+  .btn-red    { background: #da3633; color: #fff; }
+  .btn-yellow { background: #9e6a03; color: #fff; }
+  .btn-purple { background: #6e40c9; color: #fff; }
+  .btn-gray   { background: #21262d; color: var(--text); }
+
+  /* ─ 신호등 배너 ─ */
+  #signal-banner {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 14px; margin-bottom: 10px;
+    font-size: 0.85rem;
+  }
+  .signal-dot {
+    width: 18px; height: 18px; border-radius: 50%;
+    background: #333; border: 2px solid #555; flex-shrink: 0;
+  }
+  .signal-dot.go   { background: var(--green); box-shadow: 0 0 10px var(--green); }
+  .signal-dot.stop { background: var(--red);   box-shadow: 0 0 10px var(--red); }
+
+  /* ─ 메인 그리드 ─ */
+  .grid-main { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+  .card h2 { font-size: 0.68rem; color: var(--muted); text-transform: uppercase;
+              letter-spacing: 1px; margin-bottom: 10px; }
+
+  /* ─ 센서 그리드 ─ */
+  .sensor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .si { background: #0d1117; border-radius: 5px; padding: 7px 9px; }
+  .si .lbl { font-size: 0.62rem; color: var(--muted); }
+  .si .val { font-size: 0.95rem; font-weight: 600; color: var(--text); }
+  .si .val.warn { color: var(--red); }
+  .si .val.ok   { color: var(--green); }
+
+  /* ─ FSM 상태 패널 ─ */
+  .fsm-row { display: flex; justify-content: space-between; align-items: center;
+             padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 0.82rem; }
+  .fsm-row:last-child { border-bottom: none; }
+  .fsm-row .k { color: var(--muted); }
+  .fsm-row .v { font-weight: 600; color: var(--blue); }
+  .fsm-row .v.stop  { color: var(--red); }
+  .fsm-row .v.ok    { color: var(--green); }
+  .fsm-row .v.warn  { color: var(--yellow); }
+
+  /* ─ 제어 버튼 그룹 ─ */
+  .btn-group { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+
+  /* ─ 경보 ─ */
+  #alerts { margin-top: 8px; }
+  .alert-msg { color: var(--red); font-size: 0.77rem; font-weight: 600; margin-bottom: 2px; }
+
+  /* ─ 하단 영역 ─ */
+  .grid-bottom { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+  #camera-stream { max-width: 100%; border-radius: 6px; display: block; }
+  #no-cam { display: none; color: var(--muted); text-align: center; padding: 40px;
+            border: 1px dashed var(--border); border-radius: 6px; font-size: 0.85rem; }
+
+  /* ─ 장애물 DB ─ */
+  .obs-list { max-height: 220px; overflow-y: auto; }
+  .obs-item { display: flex; gap: 8px; align-items: center; padding: 5px 0;
+              border-bottom: 1px solid var(--border); font-size: 0.75rem; }
+  .obs-item img { width: 50px; height: 35px; object-fit: cover; border-radius: 3px;
+                  background: #111; }
+  .obs-info .ot { font-weight: 600; color: var(--blue); }
+  .obs-info .ar { color: var(--green); }
+  .obs-info .ar.fail { color: var(--red); }
+  .obs-info .ts { color: var(--muted); }
+
+  /* ─ 통계 카드 ─ */
+  .stat-row { display: flex; justify-content: space-between; padding: 5px 0;
+              font-size: 0.8rem; border-bottom: 1px solid var(--border); }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-row .sk { color: var(--muted); }
+  .stat-row .sv { color: var(--text); font-weight: 600; }
+
+  /* ─ 경사로 학습 카드 ─ */
+  .slope-card { background: var(--card); border: 1px solid var(--border);
+                border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+  .slope-card h2 { font-size: 0.68rem; color: var(--muted); text-transform: uppercase;
+                   letter-spacing: 1px; margin-bottom: 10px; }
+
+  .btn-orange { background: #b05000; color: #fff; }
+  .slope-route-row { display: flex; gap: 6px; margin-bottom: 8px; }
+  .slope-route-btn {
+    flex: 1; padding: 6px; font-size: 0.8rem; font-weight: 600; border-radius: 5px;
+    cursor: pointer; background: #21262d; border: 1px solid var(--border); color: var(--muted);
+    transition: all 0.15s;
+  }
+  .slope-route-btn.active { background: #1f6feb33; border-color: var(--blue); color: var(--blue); }
+  .slope-slider-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+  .slope-slider-row label { font-size: 0.72rem; color: var(--muted); display: flex;
+                             justify-content: space-between; align-items: center; }
+  .slope-slider-row input[type=range] { width: 100%; accent-color: var(--blue); }
+  .slope-status { font-size: 0.75rem; color: var(--muted); margin-bottom: 6px;
+                  padding: 5px 8px; background: #0d1117; border-radius: 4px; }
+  .slope-status.recording { color: var(--green); }
+  .slope-status.paused    { color: var(--yellow); }
+
+  /* ─ 경사로 팝업 모달 ─ */
+  .slope-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75);
+                 z-index: 200; align-items: center; justify-content: center; }
+  .slope-modal.show { display: flex; }
+  .slope-modal-box {
+    background: #1a1a24; border: 1px solid #2a2a3a; border-radius: 10px;
+    padding: 24px; min-width: 280px; text-align: center;
+  }
+  .slope-modal-box h3 { color: var(--text); font-size: 0.95rem; margin-bottom: 14px; }
+  .slope-modal-box .btn-group { justify-content: center; }
+
+  /* ─ DEADLOCK 오버레이 ─ */
+  #deadlock-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(248, 81, 73, 0.15);
+    border: 3px solid var(--red);
+    z-index: 100; animation: blink 1s ease-in-out infinite;
+  }
+  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+  #deadlock-box {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    background: var(--card); border: 2px solid var(--red);
+    border-radius: 10px; padding: 20px; min-width: 340px; text-align: center;
+  }
+  #deadlock-box h2 { color: var(--red); font-size: 1.1rem; margin-bottom: 10px; }
+  #admin-input { width: 100%; background: #0d1117; border: 1px solid var(--border);
+                 color: var(--text); border-radius: 5px; padding: 8px; font-size: 0.85rem;
+                 margin: 8px 0; }
+
+  /* ─ 토스트 ─ */
+  #toast { position: fixed; bottom: 20px; right: 20px; z-index: 200;
+           background: #21262d; border: 1px solid var(--border);
+           border-radius: 8px; padding: 10px 16px; font-size: 0.82rem;
+           opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+  #toast.show { opacity: 1; }
+  #toast.ok   { border-color: var(--green); color: var(--green); }
+  #toast.warn { border-color: var(--yellow); color: var(--yellow); }
+  #toast.err  { border-color: var(--red);   color: var(--red); }
+  #toast.info { border-color: var(--blue);  color: var(--blue); }
+
+  @media (max-width: 900px) {
+    .grid-main { grid-template-columns: 1fr 1fr; }
+    .grid-bottom { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 600px) { .grid-main { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<!-- ─ 상단 헤더 ──────────────────────────────────────────────────────── -->
+<div class="top-bar">
+  <h1>⚙ INSITE AGV AI DASHBOARD</h1>
+  <!-- 주행 모드 선택 -->
+  <button class="btn-blue"   onclick="setMode('FAST')">⚡ FAST 모드</button>
+  <button class="btn-gray"   onclick="setMode('SAFE')">🛡 SAFE 모드</button>
+  <!-- 주행 제어 -->
+  <button class="btn-green"  id="btn-start" onclick="startDrive()">▶ 주행 시작</button>
+  <button class="btn-red"    id="btn-stop"  onclick="stopDrive()">■ 주행 정지</button>
+  <!-- 로드셀 영점 -->
+  <button class="btn-gray"   onclick="socket.emit('tare_loadcell')">⚖ 영점</button>
+</div>
+
+<!-- ─ 신호등 배너 ────────────────────────────────────────────────────── -->
+<div id="signal-banner">
+  <div class="signal-dot" id="signal-dot"></div>
+  <span id="signal-text">신호등: 감지 대기 중</span>
+  <span id="waiting-tag" style="display:none; color:var(--yellow); font-size:0.75rem; margin-left:auto;">
+    ● 신호 대기 중...
+  </span>
+</div>
+
+<!-- ─ 메인 3열 그리드 ────────────────────────────────────────────────── -->
+<div class="grid-main">
+
+  <!-- ① 실시간 센서 카드 -->
+  <div class="card">
+    <h2>실시간 센서</h2>
+    <div class="sensor-grid">
+      <div class="si"><div class="lbl">pitch (°)</div><div class="val" id="s-pitch">—</div></div>
+      <div class="si"><div class="lbl">pitch_delta</div><div class="val" id="s-pdelta">—</div></div>
+      <div class="si"><div class="lbl">weight (g)</div><div class="val" id="s-weight">—</div></div>
+      <div class="si"><div class="lbl">sonic (cm)</div><div class="val" id="s-sonic">—</div></div>
+      <div class="si"><div class="lbl">accel_z (m/s²)</div><div class="val" id="s-az">—</div></div>
+      <div class="si"><div class="lbl">accel_z_delta</div><div class="val" id="s-zdelta">—</div></div>
+      <div class="si"><div class="lbl">anomaly_score</div><div class="val" id="s-anomaly">—</div></div>
+      <div class="si"><div class="lbl">Gemini 신뢰도</div><div class="val" id="s-gconf">—</div></div>
+    </div>
+    <div id="alerts"></div>
+  </div>
+
+  <!-- ② FSM 상태 카드 -->
+  <div class="card">
+    <h2>FSM 상태 / AI 판단</h2>
+    <div class="fsm-row"><span class="k">상태</span><span class="v" id="f-state">IDLE</span></div>
+    <!-- 한국어 상태 설명 -->
+    <div style="font-size:0.7rem; color:var(--muted); margin-bottom:6px;" id="f-state-ko">대기 중</div>
+    <div class="fsm-row"><span class="k">배정 경로</span><span class="v" id="f-route">—</span></div>
+    <!-- 경로 한국어 의미 -->
+    <div style="font-size:0.7rem; color:var(--muted); margin-bottom:6px;" id="f-route-ko">—</div>
+    <div class="fsm-row"><span class="k">적용 속도</span><span class="v" id="f-speed">0 %</span></div>
+    <div class="fsm-row"><span class="k">주행 모드</span><span class="v" id="f-mode">SAFE</span></div>
+    <div class="fsm-row"><span class="k">VLM 장애물</span><span class="v" id="f-obs">—</span></div>
+    <div class="fsm-row">
+      <span class="k">VLM 신뢰도</span>
+      <span class="v" id="f-vlm-conf">—</span>
+    </div>
+    <div class="fsm-row"><span class="k">VLM 판단 이유 (한국어)</span></div>
+    <div style="font-size:0.72rem; color:var(--muted); margin-top:4px; word-break:break-all;" id="f-reason">—</div>
+  </div>
+
+  <!-- ③ 제어 / 장애물 주입 카드 -->
+  <div class="card">
+    <h2>가상 장애물 주입</h2>
+    <div class="btn-group">
+      <!-- 1cm: 통과 가능 서행, 2cm: 통과 불가 → 경로 우회 -->
+      <button class="btn-yellow" onclick="injectObs('bump_1cm')">1cm 방지턱</button>
+      <button class="btn-red"    onclick="injectObs('bump_2cm')">2cm 방지턱</button>
+      <button class="btn-purple" onclick="injectObs('vinyl')">비닐 노면</button>
+      <button class="btn-gray"   onclick="injectObs('reset')">장애물 리셋</button>
+    </div>
+
+    <h2 style="margin-top:12px;">수동 제어</h2>
+    <div class="btn-group">
+      <!-- 노드 감지 자극 (팀원 코드 연결 전 테스트) -->
+      <button class="btn-blue" onclick="socket.emit('trigger_node')">📍 노드 감지 자극</button>
+      <!-- XGBoost 재학습 -->
+      <button class="btn-gray" onclick="socket.emit('manual_retrain')" id="btn-retrain">
+        🧠 XGBoost 재학습
+      </button>
+    </div>
+
+    <h2 style="margin-top:12px;">통계</h2>
+    <div class="stat-row"><span class="sk">누적 실험 행</span><span class="sv" id="st-rows">—</span></div>
+    <div class="stat-row"><span class="sk">XGBoost 정확도</span><span class="sv" id="st-acc">—</span></div>
+    <div class="stat-row"><span class="sk">장애물 DB 건수</span><span class="sv" id="st-obs">—</span></div>
+  </div>
+
+</div><!-- /.grid-main -->
+
+<!-- ─ 하단: 카메라 + 장애물 DB ──────────────────────────────────────── -->
+<div class="grid-bottom">
+
+  <!-- 전방 카메라 -->
+  <div class="card">
+    <h2>전방 카메라 MJPEG (/video_feed)</h2>
+    <img id="camera-stream" src="/video_feed" alt="전방 카메라" onerror="onCamErr()">
+    <div id="no-cam">📷 카메라 없음</div>
+  </div>
+
+  <!-- 실시간 센서 그래프 (Chart.js, sensor_update 이벤트로 갱신, 슬라이딩 윈도우 100포인트) -->
+  <div class="card" style="margin-top: 12px;">
+    <h2>실시간 센서 모니터링</h2>
+
+    <div style="margin-bottom: 12px;">
+      <div style="font-size:0.7rem; color:var(--muted); margin-bottom:4px;">
+        pitch (°) — 경사각
+      </div>
+      <div style="height: 100px; position: relative;">
+        <canvas id="chart-pitch"></canvas>
+      </div>
+    </div>
+
+    <div style="margin-bottom: 12px;">
+      <div style="font-size:0.7rem; color:var(--muted); margin-bottom:4px;">
+        accel_z_delta (m/s²) — 충격 감지 지표
+      </div>
+      <div style="height: 100px; position: relative;">
+        <canvas id="chart-accel"></canvas>
+      </div>
+    </div>
+
+    <div>
+      <div style="font-size:0.7rem; color:var(--muted); margin-bottom:4px;">
+        anomaly_score — 이상 감지 점수 (0.6 초과 시 장애물 의심)
+      </div>
+      <div style="height: 100px; position: relative;" id="anomaly-wrapper">
+        <canvas id="chart-anomaly"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- 최근 장애물 DB -->
+  <div class="card">
+    <h2>최근 장애물 이미지 DB</h2>
+    <div class="obs-list" id="obs-list">
+      <div style="color:var(--muted); font-size:0.8rem; padding:10px 0;">장애물 조우 기록 없음</div>
+    </div>
+  </div>
+
+</div><!-- /.grid-bottom -->
+
+<!-- ─ 경사로 학습 카드 (통합: 오르막/내리막 + 방지턱) ─────────────────── -->
+<div class="slope-card">
+  <h2>경사로 학습 (Isolation Forest 재학습)</h2>
+
+  <!-- 경로 선택 -->
+  <div class="slope-route-row">
+    <button class="slope-route-btn active" id="sr-A" onclick="selectSlopeRoute('A')">A 경로</button>
+    <button class="slope-route-btn"        id="sr-B" onclick="selectSlopeRoute('B')">B 경로</button>
+    <button class="slope-route-btn"        id="sr-C" onclick="selectSlopeRoute('C')">C 경로</button>
+  </div>
+
+  <!-- 슬라이더 -->
+  <div class="slope-slider-row">
+    <!-- 슬라이더 범위 0~100%, 1% 단위로 조정 (수정 4-1) -->
+    <label>오르막 속도 <span id="lbl-up-speed">50</span>%
+      <input type="range" min="0" max="100" step="1" value="50" id="sl-up-speed"
+             oninput="document.getElementById('lbl-up-speed').textContent=this.value; _slopeUpSpeed=+this.value">
+    </label>
+    <label>내리막 속도 <span id="lbl-down-speed">20</span>%
+      <input type="range" min="0" max="100" step="1" value="20" id="sl-down-speed"
+             oninput="document.getElementById('lbl-down-speed').textContent=this.value; _slopeDownSpeed=+this.value">
+    </label>
+  </div>
+
+  <!-- 상태 표시 (sensor_update에서 동적 갱신) -->
+  <div class="slope-status" id="slope-status-txt">대기 중</div>
+
+  <!-- 버튼: 기록 시작 → 일시 중지(오르막 도달 시 결과 팝업 / 내리막 중 방지턱 실패 팝업으로 분기) → 기록 종료(내리막 완료 시).
+       기록 재개는 장애물 선택 팝업에서 자동으로 처리되므로 별도 버튼 없음 (수정 6) -->
+  <div class="btn-group">
+    <button class="btn-green"  onclick="startSlopeRecording()">기록 시작</button>
+  </div>
+  <div class="btn-group" style="margin-top:6px">
+    <button class="btn-yellow" onclick="pauseSlope()">일시 중지</button>
+  </div>
+  <div class="btn-group" style="margin-top:6px">
+    <button class="btn-red"    onclick="stopSlope()">기록 종료</button>
+  </div>
+
+  <!-- 세션 삭제 영역 (slope_finished 이벤트 후 표시) -->
+  <div id="slope-delete-area" style="display:none; margin-top:8px; padding:6px 8px;
+       background:#0d1117; border-radius:4px; font-size:0.75rem; color:var(--muted);">
+    <span id="slope-last-session-txt">최근 세션: —</span>
+    <button class="btn-red" style="margin-left:10px; font-size:0.72rem; padding:4px 10px;"
+            onclick="deleteLastSession()">이 세션 삭제</button>
+  </div>
+</div>
+
+<!-- ─ 팝업 1: 오르막 결과 선택 ───────────────────────────────────────── -->
+<div class="slope-modal" id="slope-up-modal">
+  <div class="slope-modal-box">
+    <h3>오르막 결과 선택</h3>
+    <div class="btn-group">
+      <button class="btn-green"  onclick="confirmSlopeUp('normal')">성공</button>
+      <button class="btn-yellow" onclick="confirmSlopeUp('slip_risk')">슬립위험</button>
+      <button class="btn-red"    onclick="confirmSlopeUp('hill_fail')">실패</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─ 팝업 2: 내리막 장애물 선택 (오르막 성공/슬립위험 시 자동 표시) ─── -->
+<div class="slope-modal" id="slope-obstacle-modal">
+  <div class="slope-modal-box">
+    <h3>내리막 장애물 선택</h3>
+    <div class="btn-group">
+      <button class="btn-gray"   onclick="confirmObstacle('none')">장애물 없음</button>
+      <button class="btn-yellow" onclick="confirmObstacle('bump_1cm')">1cm 방지턱</button>
+      <button class="btn-red"    onclick="confirmObstacle('bump_2cm')">2cm 방지턱</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─ 팝업 3: 방지턱 통과 실패 확인 (내리막 중 일시 중지 시) ─────────── -->
+<div class="slope-modal" id="slope-bump-modal">
+  <div class="slope-modal-box">
+    <h3>방지턱 통과 못함</h3>
+    <div class="btn-group">
+      <button class="btn-red" onclick="confirmBumpFail()">방지턱 통과 못함 — 기록 종료</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─ 팝업 4: 내리막 결과 선택 ───────────────────────────────────────── -->
+<div class="slope-modal" id="slope-down-modal">
+  <div class="slope-modal-box">
+    <h3>내리막 결과 선택</h3>
+    <div class="btn-group">
+      <button class="btn-green"  onclick="confirmSlopeDown('normal')">성공</button>
+      <button class="btn-yellow" onclick="confirmSlopeDown('rollover_risk')">전복위험</button>
+      <button class="btn-red"    onclick="confirmSlopeDown('rollover')">실패</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─ DEADLOCK 오버레이 ──────────────────────────────────────────────── -->
+<div id="deadlock-overlay">
+  <div id="deadlock-box">
+    <h2>DEADLOCK — 모든 경로 차단</h2>
+    <!-- 각 경로 차단 이유 (한국어) -->
+    <div id="deadlock-reasons" style="
+      text-align:left; margin:8px 0 12px; font-size:0.78rem;
+      color:var(--yellow); line-height:1.6;
+    "></div>
+    <p style="font-size:0.82rem; color:var(--muted); margin-bottom:12px;">
+      관리자 명령을 입력하여 데드락을 해제하세요.
+    </p>
+    <input id="admin-input" type="text" placeholder="명령 입력 후 Enter...">
+    <button class="btn-green" onclick="sendAdminCmd()" style="margin-top:8px;">
+      명령 전송 / 기동 재개
+    </button>
+  </div>
+</div>
+
+<!-- ─ 토스트 메시지 ──────────────────────────────────────────────────── -->
+<div id="toast"></div>
+
+<script>
+const socket = io();
+let _lastAcc = null;
+let _obsCount = 0;
+
+// FSM 상태 한국어 설명 맵
+const FSM_KO = {
+  'IDLE':                      '대기 중',
+  'NORMAL_CRUISE':             '정상 주행',
+  'CRITICAL_STOP':             '비상 정지',
+  'HILL_HEAVY_GUARD':          '언덕+고중량 감속',
+  'STEEP_HILL_CLIMB':          '급경사 등반',
+  'MEDIUM_HILL_CLIMB':         '완경사 등반',
+  'SAFE_HEAVY_GUARD':          'SAFE 고중량 서행',
+  'PATH_BLOCKED':              '경로 차단 → 우회 중',
+  'FATAL_DEADLOCK':            '전체 경로 차단',
+  'WAITING_OPERATOR_COMMAND':  '관리자 명령 대기',
+  'ERROR':                     '시스템 오류',
+};
+
+// 경로 한국어 의미 맵
+const ROUTE_KO = {
+  'ROUTE_A':  'A경로 — 급경사·최단거리',
+  'ROUTE_B':  'B경로 — 완경사·중간거리',
+  'ROUTE_C':  'C경로 — 평지·안전경로',
+  'DEADLOCK': '전체 차단 (DEADLOCK)',
+  'UNKNOWN':  '미배정',
+};
+
+// ── SocketIO 수신: 센서 업데이트 ────────────────────────────────────────────
+socket.on('sensor_update', d => {
+  setVal('s-pitch',   d.pitch       != null ? d.pitch.toFixed(1)      : '—');
+  setVal('s-pdelta',  d.pitch_delta != null ? d.pitch_delta.toFixed(3) : '—');
+  setVal('s-weight',  d.weight_g    != null ? d.weight_g.toFixed(1)   : '—');
+  setVal('s-sonic',   d.distance_cm != null ? d.distance_cm.toFixed(1): '—');
+  setVal('s-az',      d.accel_z     != null ? d.accel_z.toFixed(3)    : '—');
+  setVal('s-zdelta',  d.accel_z_delta != null ? d.accel_z_delta.toFixed(3): '—');
+  setVal('s-anomaly', d.anomaly_score  != null ? d.anomaly_score.toFixed(3) : '—');
+  setVal('s-gconf',   d.gemini_confidence != null
+    ? (d.gemini_confidence * 100).toFixed(0) + '%' : '—');
+
+  // 이상 경보 색상
+  setWarn('s-pdelta',  d.pitch_delta   != null && Math.abs(d.pitch_delta)   > 3.0);
+  setWarn('s-zdelta',  d.accel_z_delta != null && Math.abs(d.accel_z_delta) > 4.0);
+  setWarn('s-anomaly', d.anomaly_score  != null && d.anomaly_score > 0.6);
+  setWarn('s-sonic',   d.distance_cm   != null && d.distance_cm <= 10);
+
+  // FSM 상태 + 한국어 설명
+  const state = d.fsm_state || 'IDLE';
+  setVal('f-state', state);
+  setFsmClass('f-state', state.includes('STOP') || state.includes('DEAD') ? 'stop'
+              : state === 'NORMAL_CRUISE' ? 'ok' : 'warn');
+  setVal('f-state-ko', FSM_KO[state] || state);
+
+  // 경로 + 한국어 의미
+  const route = d.route || '—';
+  setVal('f-route', route);
+  setVal('f-route-ko', ROUTE_KO[route] || '');
+
+  setVal('f-speed', (d.speed ?? 0) + ' %');
+  setVal('f-mode',  d.drive_mode || '—');
+  setVal('f-obs',   d.vlm_obs_type || '—');
+  // VLM 신뢰도
+  setVal('f-vlm-conf', d.gemini_confidence != null
+    ? (d.gemini_confidence * 100).toFixed(0) + '%' : '—');
+  setVal('f-reason', d.vlm_reason || '—');
+
+  // 신호등
+  if (d.signal) updateSignal(d.signal);
+  const wtag = document.getElementById('waiting-tag');
+  if (wtag) wtag.style.display = d.waiting_signal ? 'inline' : 'none';
+
+  // 경보 메시지
+  const alertBox = document.getElementById('alerts');
+  alertBox.innerHTML = '';
+  if (d.alerts && d.alerts.length) {
+    d.alerts.forEach(a => {
+      const p = document.createElement('p');
+      p.className = 'alert-msg';
+      p.textContent = a;
+      alertBox.appendChild(p);
+    });
+  }
+});
+
+// ── 신호등 업데이트 ──────────────────────────────────────────────────────────
+socket.on('signal_update', d => updateSignal(d.signal));
+
+function updateSignal(sig) {
+  const dot  = document.getElementById('signal-dot');
+  const txt  = document.getElementById('signal-text');
+  dot.className = 'signal-dot';
+  if (sig === 'GO')   { dot.classList.add('go');   txt.textContent = '신호등: GO (초록)'; }
+  else if (sig === 'STOP') { dot.classList.add('stop'); txt.textContent = '신호등: STOP (빨강)'; }
+  else                { txt.textContent = '신호등: 감지 중...'; }
+}
+
+// ── DEADLOCK 오버레이 — 각 경로 차단 이유(한국어) 표시 ────────────────────────
+socket.on('deadlock_alert', d => {
+  document.getElementById('deadlock-overlay').style.display = d.active ? 'block' : 'none';
+  if (d.active && d.blocked_reasons) {
+    const reasonEl = document.getElementById('deadlock-reasons');
+    const lines = Object.entries(d.blocked_reasons)
+      .map(([k, v]) => `<div>ROUTE_${k}: ${v}</div>`)
+      .join('');
+    if (reasonEl) reasonEl.innerHTML = lines || '';
+  }
+  if (!d.active) {
+    const reasonEl = document.getElementById('deadlock-reasons');
+    if (reasonEl) reasonEl.innerHTML = '';
+  }
+});
+
+// ── 재학습 완료 ───────────────────────────────────────────────────────────────
+socket.on('retrain_done', d => {
+  _lastAcc = d.accuracy;
+  setVal('st-acc', d.accuracy >= 0 ? (d.accuracy * 100).toFixed(1) + '%' : '데이터 부족');
+  document.getElementById('btn-retrain').disabled = false;
+});
+
+// ── 토스트 메시지 ─────────────────────────────────────────────────────────────
+socket.on('toast', d => showToast(d.msg, d.type || 'info'));
+
+// ── 유틸 ─────────────────────────────────────────────────────────────────────
+function setVal(id, v) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = v;
+}
+function setWarn(id, warn) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.toggle('warn', warn);
+}
+function setFsmClass(id, cls) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.className = 'v ' + cls;
+}
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className   = 'show ' + type;
+  setTimeout(() => { t.className = type; }, 3000);
+}
+
+// ── 주행 제어 ─────────────────────────────────────────────────────────────────
+function setMode(mode) {
+  socket.emit('set_drive_mode', { mode });
+  setVal('f-mode', mode);
+  showToast('모드 전환: ' + mode, 'info');
+}
+function startDrive() {
+  socket.emit('start_drive');
+  document.getElementById('waiting-tag').style.display = 'inline';
+}
+function stopDrive() {
+  socket.emit('stop_drive');
+  document.getElementById('waiting-tag').style.display = 'none';
+}
+
+// ── 가상 장애물 주입 ──────────────────────────────────────────────────────────
+function injectObs(type) {
+  socket.emit('inject_obstacle', { obs: type });
+}
+
+// ── 관리자 명령 (DEADLOCK 해제) ───────────────────────────────────────────────
+function sendAdminCmd() {
+  const cmd = document.getElementById('admin-input').value.trim();
+  socket.emit('admin_command', { command: cmd });
+  document.getElementById('admin-input').value = '';
+}
+document.getElementById('admin-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') sendAdminCmd();
+});
+
+// ── 카메라 오류 처리 ──────────────────────────────────────────────────────────
+function onCamErr() {
+  document.getElementById('camera-stream').style.display = 'none';
+  document.getElementById('no-cam').style.display = 'block';
+}
+
+// ── 장애물 DB 주기적 갱신 (10초마다) ──────────────────────────────────────────
+async function refreshObstacleDB() {
+  try {
+    const r  = await fetch('/api/obstacle_db');
+    const db = await r.json();
+    _obsCount = db.length;
+    setVal('st-obs', db.length + '건');
+
+    const list = document.getElementById('obs-list');
+    if (!db.length) {
+      list.innerHTML = '<div style="color:var(--muted);font-size:0.8rem;padding:10px 0">장애물 조우 기록 없음</div>';
+      return;
+    }
+    // 최신 10건만 역순 표시
+    const recent = db.slice(-10).reverse();
+    list.innerHTML = recent.map(e => {
+      const passed = ['passed', 'cautious'].some(k => (e.actual_result || '').includes(k));
+      const imgSrc  = e.image_path
+        ? '/obstacle_image/' + e.image_path.split('/').pop()
+        : '';
+      return `<div class="obs-item">
+        ${imgSrc ? `<img src="${imgSrc}" onerror="this.style.display='none'">` : '<div style="width:50px"></div>'}
+        <div class="obs-info">
+          <div class="ot">${e.obstacle_type || '?'}</div>
+          <div class="ar ${passed ? '' : 'fail'}">${e.actual_result || '대기 중'}</div>
+          <div class="ts">${(e.timestamp || '').slice(11, 19)}</div>
+        </div>
+        <div style="margin-left:auto; font-size:0.7rem; color:var(--muted)">
+          ${e.gemini_confidence ? (e.gemini_confidence * 100).toFixed(0) + '%' : ''}
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) { /* 조용히 실패 */ }
+}
+
+// ── 통계 주기적 갱신 ─────────────────────────────────────────────────────────
+async function refreshStats() {
+  try {
+    const r  = await fetch('/api/status');
+    const st = await r.json();
+    setVal('st-rows', (st.row_count ?? '—') + '건');
+    if (_lastAcc !== null) {
+      setVal('st-acc', (_lastAcc * 100).toFixed(1) + '%');
+    }
+  } catch (e) { /* 무시 */ }
+}
+
+// ── 초기화 및 주기 갱신 ──────────────────────────────────────────────────────
+refreshObstacleDB();
+refreshStats();
+setInterval(refreshObstacleDB, 10000);
+setInterval(refreshStats, 5000);
+
+// ── 경사로 학습 ──────────────────────────────────────────────────────────────
+let _slopeRoute      = 'A';
+let _slopeUpSpeed    = 50;
+let _slopeDownSpeed  = 20;
+let _currentObstacle = 'none';  // 내리막 선택 장애물
+let _lastSessionId   = '';      // 삭제용 최근 세션 ID
+let _slopeUpResult   = '';      // 오르막 결과 임시 저장
+let _slopePhase      = 'idle';  // idle / up / down — 일시중지 버튼 분기용 (수정 6)
+
+function selectSlopeRoute(r) {
+  _slopeRoute = r;
+  ['A','B','C'].forEach(k => {
+    document.getElementById('sr-' + k).classList.toggle('active', k === r);
+  });
+}
+
+function startSlopeRecording() {
+  _slopePhase = 'up';
+  _currentObstacle = 'none';
+  socket.emit('slope_start', {
+    route: _slopeRoute, up_speed: _slopeUpSpeed, down_speed: _slopeDownSpeed
+  });
+  // 상태 표시는 sensor_update 핸들러가 갱신
+  document.getElementById('slope-delete-area').style.display = 'none';
+}
+
+function pauseSlope() {
+  if (_slopePhase === 'up') {
+    // 오르막 완료 → 오르막 결과 팝업
+    document.getElementById('slope-up-modal').style.display = 'flex';
+  } else if (_slopePhase === 'down') {
+    // 내리막 중 방지턱 통과 실패 → 방지턱 실패 팝업
+    document.getElementById('slope-bump-modal').style.display = 'flex';
+  }
+}
+
+function confirmSlopeUp(label) {
+  document.getElementById('slope-up-modal').style.display = 'none';
+  _slopeUpResult = label;
+  socket.emit('slope_pause', { label: label });
+  // 실패(hill_fail): slope_finished 수신 시 처리 (장애물 팝업 없음)
+  // 성공/슬립 위험: show_obstacle_modal 수신 시 장애물 선택 팝업 표시
+}
+
+// 서버에서 show_obstacle_modal 수신 → 장애물 선택 팝업 표시 (수정 6)
+socket.on('show_obstacle_modal', d => {
+  _slopeUpResult = d.up_result;
+  document.getElementById('slope-obstacle-modal').style.display = 'flex';
+});
+
+function confirmObstacle(obstacle) {
+  _currentObstacle = obstacle;
+  document.getElementById('slope-obstacle-modal').style.display = 'none';
+  _slopePhase = 'down';
+  socket.emit('slope_set_obstacle', { obstacle: obstacle });
+  // slope_set_obstacle 핸들러에서 내리막 자동 시작
+}
+
+function confirmBumpFail() {
+  document.getElementById('slope-bump-modal').style.display = 'none';
+  socket.emit('slope_bump_fail');
+}
+
+function stopSlope() {
+  if (_slopePhase !== 'down') { return; } // 내리막 아닐 때 팝업 무시
+  // 내리막 완료 → 내리막 결과 팝업 표시
+  document.getElementById('slope-down-modal').style.display = 'flex';
+}
+
+function confirmSlopeDown(label) {
+  document.getElementById('slope-down-modal').style.display = 'none';
+  socket.emit('slope_stop', { label: label });
+  _slopePhase = 'idle';
+}
+
+// slope_finished 이벤트: 세션 삭제 영역 표시
+socket.on('slope_finished', d => {
+  _lastSessionId   = d.session_id || '';
+  _slopePhase      = 'idle';
+  _currentObstacle = 'none';
+  _slopeUpResult   = '';
+  if (_lastSessionId) {
+    document.getElementById('slope-last-session-txt').textContent = '최근 세션: ' + _lastSessionId;
+    document.getElementById('slope-delete-area').style.display = 'block';
+  }
+});
+
+function deleteLastSession() {
+  if (!_lastSessionId) return;
+  if (!confirm(_lastSessionId + ' 세션을 삭제할까요?')) return;
+  socket.emit('slope_delete_session', { session_id: _lastSessionId });
+  document.getElementById('slope-delete-area').style.display = 'none';
+}
+
+function _setSlopeStatus(msg, cls) {
+  const el = document.getElementById('slope-status-txt');
+  el.textContent = msg;
+  el.className = 'slope-status ' + cls;
+}
+
+// sensor_update 에서 slope 상태 표시 갱신
+socket.on('sensor_update', (d) => {
+  // 경사로 학습 상태 문구 갱신 (수정 4-4)
+  if (!d.slope_learning) {
+    _setSlopeStatus('대기 중', '');
+  } else if (d.slope_phase === 'up' && !d.slope_paused) {
+    _setSlopeStatus('오르막 기록 중 — ' + (d.slope_up_cnt || 0) + '행', 'recording');
+  } else if (d.slope_paused && d.slope_phase !== 'up_done') {
+    _setSlopeStatus('일시 중지 — 내리막 준비', 'paused');
+  } else if (d.slope_phase === 'down' && !d.slope_paused) {
+    _setSlopeStatus('내리막 기록 중 — ' + (d.slope_down_cnt || 0) + '행 (장애물: ' + (d.slope_obstacle || 'none') + ')', 'recording');
+  }
+});
+
+// ── 키보드 수동 조작 (방향키 + Space, W/A/S/D 미사용) ────────────────────────
+// keydown → socket.emit('manual_move') → dashboard.py on_manual_move
+// keyup   → stop 명령 전송 (키를 떼면 즉시 정지)
+const KEY_DIR_MAP = {
+  'ArrowUp':    'forward',
+  'ArrowDown':  'backward',
+  'ArrowLeft':  'left',
+  'ArrowRight': 'right',
+  ' ':          'stop',
+};
+const _pressedKeys = new Set();  // 키 누름 중복 억제용 집합
+
+document.addEventListener('keydown', function(e) {
+  // admin-input 포커스 중에는 키보드 조작 비활성화
+  if (document.activeElement && document.activeElement.id === 'admin-input') return;
+  const dir = KEY_DIR_MAP[e.key];
+  if (!dir) return;
+  e.preventDefault();             // 방향키 페이지 스크롤 방지
+  if (_pressedKeys.has(e.key)) return;  // 키 반복 이벤트 억제
+  _pressedKeys.add(e.key);
+  socket.emit('manual_move', { direction: dir, speed: 40 });
+});
+
+document.addEventListener('keyup', function(e) {
+  if (!KEY_DIR_MAP[e.key]) return;
+  e.preventDefault();
+  _pressedKeys.delete(e.key);
+  socket.emit('manual_move', { direction: 'stop', speed: 0 });  // 키 떼면 정지
+});
+
+// ── 실시간 센서 그래프 (Chart.js) ────────────────────────────────────────────
+// 차트에 데이터 1개 추가 + 슬라이딩 윈도우 100포인트 유지
+function addDataPoint(chart, label, value) {
+    chart.data.labels.push(label);
+    chart.data.datasets[0].data.push(value);
+    if (chart.data.labels.length > 100) {
+        chart.data.labels.shift();
+        chart.data.datasets[0].data.shift();
+    }
+    chart.update('none'); // 애니메이션 없이 빠르게 갱신
+}
+
+// 차트 공통 옵션 (다크 테마, 범례 숨김, 애니메이션 없음)
+const chartDefaults = {
+    type: 'line',
+    options: {
+        animation: false,
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+            x: {
+                ticks: { color: '#666', maxTicksLimit: 5, maxRotation: 0 },
+                grid:  { color: '#1a1a2e' }
+            },
+            y: {
+                ticks: { color: '#aaa' },
+                grid:  { color: '#1a1a2e' }
+            }
+        }
+    }
+};
+
+// pitch 실시간 차트 (초록, -40~40도)
+const pitchChart = new Chart(
+    document.getElementById('chart-pitch'),
+    {
+        ...chartDefaults,
+        data: {
+            labels: [],
+            datasets: [{
+                data: [],
+                borderColor: '#4ade80',
+                borderWidth: 1.5,
+                pointRadius: 0,
+                fill: false,
+            }]
+        },
+        options: {
+            ...chartDefaults.options,
+            scales: {
+                ...chartDefaults.options.scales,
+                y: { ...chartDefaults.options.scales.y, min: -40, max: 40 }
+            }
+        }
+    }
+);
+
+// accel_z_delta 실시간 차트 (노랑, -5~5 m/s², 이상 감지 핵심 지표)
+const accelChart = new Chart(
+    document.getElementById('chart-accel'),
+    {
+        ...chartDefaults,
+        data: {
+            labels: [],
+            datasets: [{
+                data: [],
+                borderColor: '#f59e0b',
+                borderWidth: 1.5,
+                pointRadius: 0,
+                fill: false,
+            }]
+        },
+        options: {
+            ...chartDefaults.options,
+            scales: {
+                ...chartDefaults.options.scales,
+                y: { ...chartDefaults.options.scales.y, min: -5, max: 5 }
+            }
+        }
+    }
+);
+
+// anomaly_score 실시간 차트 (빨강, 0~1, 0.6 기준선 점선 표시)
+const anomalyChart = new Chart(
+    document.getElementById('chart-anomaly'),
+    {
+        ...chartDefaults,
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    data: [],
+                    borderColor: '#f87171',
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    fill: false,
+                },
+                {
+                    // 0.6 기준선 (점선)
+                    data: Array(100).fill(0.6),
+                    borderColor: 'rgba(255,100,100,0.5)',
+                    borderWidth: 1,
+                    borderDash: [4, 4],
+                    pointRadius: 0,
+                    fill: false,
+                }
+            ]
+        },
+        options: {
+            ...chartDefaults.options,
+            scales: {
+                ...chartDefaults.options.scales,
+                y: { ...chartDefaults.options.scales.y, min: 0, max: 1 }
+            }
+        }
+    }
+);
+
+// sensor_update 수신 시 실시간 그래프 갱신 (기존 센서 표시 갱신과 별도)
+socket.on('sensor_update', d => {
+    const now = new Date().toLocaleTimeString('ko-KR', {
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
+
+    if (typeof pitchChart !== 'undefined')   addDataPoint(pitchChart,   now, d.pitch        ?? 0);
+    if (typeof accelChart !== 'undefined')   addDataPoint(accelChart,   now, d.accel_z_delta ?? 0);
+    if (typeof anomalyChart !== 'undefined') addDataPoint(anomalyChart, now, d.anomaly_score ?? 0);
+
+    // anomaly_score > 0.6 이면 그래프 배경을 빨간색으로 강조
+    if (typeof anomalyChart !== 'undefined') {
+        const isAnomaly = (d.anomaly_score ?? 0) > 0.6;
+        anomalyChart.canvas.parentNode.style.background =
+            isAnomaly ? 'rgba(255,0,0,0.08)' : 'transparent';
+    }
+});
+</script>
+</body>
+</html>

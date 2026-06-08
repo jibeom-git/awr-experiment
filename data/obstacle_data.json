@@ -1,0 +1,63 @@
+[
+  {
+    "id": 1,
+    "image": "obstacle_001.jpg",
+    "obs_type": "bump",
+    "obs_level": "10deg",
+    "floor_type": "smooth",
+    "speed": 50,
+    "weight_g": -0.3,
+    "distance_cm": 36.2,
+    "result": "fail",
+    "memo": "",
+    "timestamp": "2026-05-27 20:09:00"
+  },
+  {
+    "id": 2,
+    "image": "obstacle_002.jpg",
+    "obs_type": "bump",
+    "obs_level": "1cm",
+    "floor_type": "smooth",
+    "speed": 40,
+    "weight_g": 159.3,
+    "distance_cm": 11.1,
+    "result": "success",
+    "memo": "",
+    "timestamp": "2026-05-27 20:21:49"
+  },
+  {
+    "id": 3,
+    "image": "obstacle_003.jpg",
+    "obs_type": "bump",
+    "obs_level": "1cm",
+    "floor_type": "smooth",
+    "speed": 40,
+    "weight_g": 13.6,
+    "distance_cm": 11.1,
+    "accel_snap": {
+      "x": -0.0325,
+      "y": 0.979,
+      "z": 0.3662
+    },
+    "gyro_snap": {
+      "x": 0.1079,
+      "y": -0.0978,
+      "z": -0.0282
+    },
+    "imu_trial": {
+      "accel_x_max": -0.9016,
+      "accel_x_mean": -0.0595,
+      "accel_y_max": 1.3962,
+      "accel_y_mean": 0.9862,
+      "accel_z_max": 1.1631,
+      "accel_z_mean": 0.3823,
+      "gyro_x_max": 26.0316,
+      "gyro_y_max": 41.8412,
+      "gyro_z_max": 50.6359,
+      "samples": 74
+    },
+    "result": "fail",
+    "memo": "",
+    "timestamp": "2026-05-27 20:33:26"
+  }
+]
