@@ -5,7 +5,6 @@ import os, json, base64, re
 import urllib.request
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-#GEMINI_API_KEY ="AQ.Ab8RN6KCAbTrAszti2NGoau90oF6MfJasJ1kOwbQNEftaWGitw"
 GEMINI_MODEL   = "gemini-2.5-flash"
 
 PROMPT = """You are a visual measurement system for a small AGV robot (body height: 13cm, wheel diameter: 6cm,ground clearance: 2cm).
