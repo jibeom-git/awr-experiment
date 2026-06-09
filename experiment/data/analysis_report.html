@@ -21,40 +21,40 @@
 </head>
 <body>
 <h1>📈 INSITE 실험 데이터 분석 리포트</h1>
-<p style="color:#64748b;font-size:0.8rem;">생성: 2026-06-06T00:29:25.358233 &nbsp;|&nbsp; 총 21450행</p>
+<p style="color:#64748b;font-size:0.8rem;">생성: 2026-06-09T05:56:38.943576 &nbsp;|&nbsp; 총 34679행</p>
 
 <h2>추천 임계값 요약</h2>
 <div class="grid">
   <div class="card">
-    <div class="key">pitch_delta_threshold (등판 실패)</div>
+    <div class="key">TH_PITCH_DELTA_FAIL (등판 실패)</div>
     <div class="val">1.0</div>
-    <div class="stat-row">count=6170, mean=0.2566, std=0.348, min=0.0, max=2.9, p95=1.0</div>
+    <div class="stat-row">count=9005, mean=0.2639, std=0.3582, min=0.0, max=2.9, p95=1.0</div>
   </div>
   <div class="card">
     <div class="key">min_hill_speed (등판 최저 속도)</div>
     <div class="val">10.0</div>
   </div>
   <div class="card">
-    <div class="key">slip_accel_ratio_threshold (슬립)</div>
-    <div class="val">4.1175</div>
-    <div class="stat-row">count=78, mean=3.9512, std=2.4364, min=0.0083, max=8.4233, p95=8.4233</div>
+    <div class="key">TH_SLIP_ACCEL (슬립)</div>
+    <div class="val">2.7867</div>
+    <div class="stat-row">count=491, mean=3.2542, std=2.0319, min=0.005, max=11.572, p95=8.0583</div>
   </div>
   <div class="card">
-    <div class="key">impact_z_threshold (방지턱 충격)</div>
+    <div class="key">TH_IMPACT_Z (방지턱 충격)</div>
     <div class="val">10.81</div>
-    <div class="stat-row">count=1291, mean=0.6155, std=1.9969, min=0.0, max=18.474, p95=2.989</div>
+    <div class="stat-row">count=3472, mean=0.7383, std=1.5991, min=0.0, max=18.474, p95=3.141</div>
   </div>
   <div class="card">
     <div class="key">cautious_pass_speed_avg (서행 통과 평균 속도)</div>
-    <div class="val">50.7927</div>
-    <div class="stat-row">count=1804, mean=50.7927, std=12.3054, min=20.0, max=80.0, p95=70.0</div>
+    <div class="val">49.498</div>
+    <div class="stat-row">count=2530, mean=49.498, std=16.2547, min=20.0, max=80.0, p95=70.0</div>
   </div>
 </div>
 
 <h2>레이블 분포</h2>
 <table>
   <tr><th>result</th><th>행 수</th></tr>
-  <tr><td>normal</td><td>12107</td></tr><tr><td>hill_fail</td><td>6170</td></tr><tr><td>cautious_pass</td><td>1804</td></tr><tr><td>impact</td><td>1291</td></tr><tr><td>slip</td><td>78</td></tr>
+  <tr><td>normal</td><td>19181</td></tr><tr><td>hill_fail</td><td>9005</td></tr><tr><td>cautious_pass</td><td>2530</td></tr><tr><td>impact</td><td>3472</td></tr><tr><td>slip</td><td>491</td></tr>
 </table>
 
 <h2>pitch_delta 분포 히스토그램</h2>
@@ -71,8 +71,8 @@
 new Chart(document.getElementById("ch-pd"), {
   type: "bar",
   data: {
-    labels: ["-2.9", "-2.64", "-2.38", "-2.12", "-1.86", "-1.6", "-1.34", "-1.08", "-0.82", "-0.56", "-0.3", "-0.04", "0.22", "0.48", "0.74", "1.0", "1.26", "1.52", "1.78", "2.04"],
-    datasets: [{ data: [13, 9, 18, 65, 66, 110, 135, 114, 706, 918, 5070, 10482, 1362, 1104, 422, 441, 199, 127, 72, 17], backgroundColor: "#3b82f6", borderWidth: 0 }],
+    labels: ["-2.9", "-2.62", "-2.35", "-2.07", "-1.8", "-1.52", "-1.25", "-0.97", "-0.7", "-0.42", "-0.15", "0.13", "0.4", "0.68", "0.95", "1.23", "1.5", "1.78", "2.05", "2.33"],
+    datasets: [{ data: [21, 14, 64, 104, 134, 246, 378, 409, 1539, 4281, 18518, 4832, 1391, 1247, 712, 281, 352, 113, 39, 4], backgroundColor: "#3b82f6", borderWidth: 0 }],
   },
   options: {
     plugins: { legend: { display: false } },
@@ -85,8 +85,8 @@ new Chart(document.getElementById("ch-pd"), {
 new Chart(document.getElementById("ch-az"), {
   type: "bar",
   data: {
-    labels: ["-18.47", "-17.01", "-15.54", "-14.07", "-12.6", "-11.13", "-9.66", "-8.19", "-6.73", "-5.26", "-3.79", "-2.32", "-0.85", "0.62", "2.08", "3.55", "5.02", "6.49", "7.96", "9.43"],
-    datasets: [{ data: [4, 0, 4, 9, 0, 0, 8, 8, 17, 22, 368, 1468, 18644, 759, 80, 30, 17, 8, 0, 4], backgroundColor: "#a855f7", borderWidth: 0 }],
+    labels: ["-18.47", "-16.86", "-15.25", "-13.64", "-12.03", "-10.42", "-8.81", "-7.2", "-5.59", "-3.98", "-2.37", "-0.76", "0.85", "2.46", "4.07", "5.68", "7.29", "8.9", "10.51", "12.12"],
+    datasets: [{ data: [4, 0, 4, 9, 0, 0, 25, 22, 38, 716, 3932, 28676, 1014, 159, 38, 21, 8, 4, 4, 5], backgroundColor: "#a855f7", borderWidth: 0 }],
   },
   options: {
     plugins: { legend: { display: false } },

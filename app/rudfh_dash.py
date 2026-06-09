@@ -1,9 +1,5 @@
-# app/cv_dashboard_clean.py
-# OpenCV 라인 추종 + 초록 분기점 표식 기반 경로 선택 대시보드
-# AI 판단 제거 버전 (경로주행 + 우회만)
-#
-# 실행: python app/cv_dashboard_bypass.py
-# 접속: http://192.168.0.50:5001
+#python app/rudfh_dash.py
+
 
 import sys, os, time, threading, copy
 sys.path.insert(0, '/home/pi/insite')
@@ -17,7 +13,6 @@ from sensors.motor  import MotorController
 
 app   = Flask(__name__)
 cam   = Camera(width=320, height=240)
-
 try:
     from sensors.mpu6050 import MPU6050
     imu = MPU6050()
@@ -30,26 +25,7 @@ except Exception as e:
     _baseline = {'x': 0.0}
     IMU_AVAILABLE = False
     print(f"[IMU] SKIP: {e}")
-
 motor = MotorController()
-
-try:
-    import warnings, signal
-    def _ultra_timeout(signum, frame):
-        raise TimeoutError()
-    signal.signal(signal.SIGALRM, _ultra_timeout)
-    signal.alarm(3)
-    from gpiozero import DistanceSensor
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        ultra = DistanceSensor(echo=24, trigger=23, max_distance=2)
-    signal.alarm(0)
-    ULTRA_AVAILABLE = True
-    print("[OK] 초음파")
-except Exception as e:
-    ultra = None
-    ULTRA_AVAILABLE = False
-    print(f"[SKIP] 초음파: {e}")
 
 ROUTES = {
     "A":   {1: "straight", 2: "stop"},
@@ -77,7 +53,7 @@ config = {
     "green_v_min":    50,
     "green_min_area": 200,
     "forward_time":   0.5,
-    "slope_speed":    40,
+    "slope_speed": 50
 }
 
 lock  = threading.Lock()
@@ -85,7 +61,6 @@ state = {
     "cx": None, "error": 0, "correction": 0,
     "action": "정지", "lost": False, "fps": 0,
     "junction_count": 0, "route": "A", "green_area": 0,
-    "distance": -1,
 }
 latest_debug = None
 
@@ -143,16 +118,13 @@ def spin_right(speed):
     motor.set_motor(2, -1, speed)
     motor.set_motor(1, -1, speed)
 
-# ══════════════════════════════════════════════════════
-# 우회
-# ══════════════════════════════════════════════════════
 def do_reroute(new_route: str):
     print(f"[Reroute] 우회 시작 → {new_route}")
     motor.motorStop()
     time.sleep(0.3)
 
-    kernel = np.ones((3, 3), np.uint8)
-    timeout = time.time() + 10.0
+    # 초록 분기점 보일 때까지 후진
+    timeout = time.time() + 10.0  # 최대 10초
     while time.time() < timeout:
         frame = cam.capture()
         frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
@@ -163,7 +135,6 @@ def do_reroute(new_route: str):
         lower = np.array([config["green_h_min"], config["green_s_min"], config["green_v_min"]])
         upper = np.array([config["green_h_max"], 255, 255])
         green_mask = cv2.inRange(roi_hsv, lower, upper)
-        green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_OPEN, kernel)  # 노이즈 제거
         green_area = int(np.sum(green_mask > 0))
 
         if green_area > config["green_min_area"]:
@@ -171,6 +142,7 @@ def do_reroute(new_route: str):
             print("[Reroute] 초록 분기점 발견 — 정지")
             break
 
+        # 후진
         motor.set_motor(1, -1, config["base_speed"])
         motor.set_motor(2, -1, config["base_speed"])
         motor.set_motor(3, -1, config["base_speed"])
@@ -179,6 +151,8 @@ def do_reroute(new_route: str):
 
     motor.motorStop()
     time.sleep(0.5)
+
+    # 경로 변경 + 카운트 리셋
     reset_junction()
     config['route']   = new_route
     config['running'] = True
@@ -211,6 +185,7 @@ def detect_line_and_green(frame, cfg):
         cx = int(M['m10'] / M['m00'])
         cy = int(M['m01'] / M['m00']) + roi_y
 
+    # 초록 감지 (ROI 안에서만)
     roi_hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
     lower = np.array([cfg["green_h_min"], cfg["green_s_min"], cfg["green_v_min"]])
     upper = np.array([cfg["green_h_max"], 255, 255])
@@ -225,7 +200,7 @@ def detect_line_and_green(frame, cfg):
         Mg = cv2.moments(green_mask)
         if Mg['m00'] > 0:
             green_cx = int(Mg['m10'] / Mg['m00'])
-            green_cy = int(Mg['m01'] / Mg['m00']) + roi_y
+            green_cy = int(Mg['m01'] / Mg['m00'])+ roi_y
 
     debug = frame.copy()
     cv2.line(debug, (0, roi_y), (w, roi_y), (255, 180, 0), 2)
@@ -259,6 +234,7 @@ def detect_line_and_green(frame, cfg):
 def execute_junction(action, cfg):
     print(f"[Junction] 행동: {action}")
 
+    # 분기점 표식 위를 지나칠 때까지 직진
     go_forward(cfg["base_speed"])
     time.sleep(cfg["forward_time"])
     motor.motorStop()
@@ -277,12 +253,48 @@ def execute_junction(action, cfg):
         time.sleep(0.4)
         return
 
-    if action in ("left", "right"):
+    # elif action in ("left", "right"):
+    #     spin_fn = spin_left if action == "left" else spin_right
+
+    #     # 90도 고정 회전 (속도 30, 1.8초)
+    #     spin_fn(30)
+    #     time.sleep(2.0)
+    #     motor.motorStop()
+    #     time.sleep(0.1)
+
+    #     # 미세 조정: action 방향으로만 고정 회전 (lost_dir 무시)
+    #     fine_timeout = time.time() + 2.0
+    #     while time.time() < fine_timeout:
+    #         frame = cam.capture()
+    #         frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+    #         h, w  = frame.shape[:2]
+    #         roi_y = int(h * cfg["roi_top"])
+    #         roi   = frame[roi_y:h, :]
+    #         gray  = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    #         _, binary = cv2.threshold(gray, cfg["thresh"], 255, cv2.THRESH_BINARY_INV)
+    #         M = cv2.moments(binary)
+
+    #         if M['m00'] > 0:
+    #             cx = int(M['m10'] / M['m00'])
+    #             if abs(cx - w // 2) < 20:
+    #                 motor.motorStop()
+    #                 print(f"[Junction] {action} 완료")
+    #                 return
+
+    #         # lost_dir 무시하고 항상 action 방향으로만 회전
+    #         spin_fn(20)
+    #         time.sleep(0.03)
+
+    #     motor.motorStop()
+    #     print(f"[Junction] {action} 타임아웃")
+    elif action in ("left", "right"):
         spin_fn = spin_left if action == "left" else spin_right
 
+        # 먼저 60도 고정 회전 (원래 선 벗어나기)
         spin_fn(35)
         time.sleep(1.5)
 
+        # 그 다음 선이 중앙에 올 때까지 계속 회전 (최대 4초)
         fine_timeout = time.time() + 2.0
         while time.time() < fine_timeout:
             frame = cam.capture()
@@ -358,13 +370,6 @@ def drive_loop():
                 state["cx"]             = cx
                 state["green_area"]     = green_area
                 state["junction_count"] = get_junction_count()
-            if ULTRA_AVAILABLE and ultra:
-                try:
-                    d = ultra.distance
-                    with lock:
-                        state["distance"] = round(d * 100, 1) if d else -1
-                except:
-                    pass
             time.sleep(0.05)
             continue
         else:
@@ -397,9 +402,11 @@ def drive_loop():
             green_seen = False
 
         # 라인 추종 (PI 제어)
+        # 라인 추종 (PI 제어)
         correction = 0
         action     = "직진"
 
+        # 경사 감지
         on_slope = False
         if IMU_AVAILABLE:
             accel    = imu.get_accel()
@@ -448,14 +455,6 @@ def drive_loop():
             state["route"]          = current_route
             state["green_area"]     = green_area
             state["junction_count"] = get_junction_count()
-
-        if ULTRA_AVAILABLE and ultra:
-            try:
-                d = ultra.distance
-                with lock:
-                    state["distance"] = round(d * 100, 1) if d else -1
-            except:
-                pass
 
         time.sleep(0.03)
 
@@ -584,7 +583,7 @@ HTML = '''<!DOCTYPE html>
 </head>
 <body>
 <header>
-  <h1>▶ LINE FOLLOW DASHBOARD</h1>
+  <h1>▶ LINE FOLLOW DASHBOARD (GREEN MARKER)</h1>
   <span class="fps" id="fps">-- fps</span>
 </header>
 <div class="layout">
@@ -601,10 +600,6 @@ HTML = '''<!DOCTYPE html>
       <div class="stat"><div class="label">ERROR (px)</div><div class="value" id="error">--</div></div>
       <div class="stat"><div class="label">GREEN AREA</div><div class="value" id="green">--</div></div>
       <div class="stat">
-        <div class="label">ULTRASONIC (cm)</div>
-        <div class="value" id="ultra">--</div>
-      </div>
-      <div class="stat">
         <div class="label">분기점 <span class="junction-badge" id="junc">0</span></div>
         <div class="value" id="route-state">--</div>
       </div>
@@ -618,13 +613,13 @@ HTML = '''<!DOCTYPE html>
     <h2>CONTROL</h2>
     <div style="font-size:0.7rem;color:#666;margin-bottom:6px">경로 선택</div>
     <div class="route-row">
-      <button class="btn-route active" id="btn-A" onclick="selectRoute(\'A\')">
+      <button class="btn-route active" id="btn-A" onclick="selectRoute('A')">
         A<br><span style="font-size:0.65rem;font-weight:normal">직진만</span>
       </button>
-      <button class="btn-route" id="btn-B" onclick="selectRoute(\'B\')">
-        B<br><span style="font-size:0.65rem;font-weight:normal">1좌→2우→3우</span>
+      <button class="btn-route" id="btn-B" onclick="selectRoute('B')">
+        B<br><span style="font-size:0.65rem;font-weight:normal">1좌→2우→5우</span>
       </button>
-      <button class="btn-route" id="btn-C" onclick="selectRoute(\'C\')">
+      <button class="btn-route" id="btn-C" onclick="selectRoute('C')">
         C<br><span style="font-size:0.65rem;font-weight:normal">1좌→2직→3우→4우→5직</span>
       </button>
     </div>
@@ -634,50 +629,50 @@ HTML = '''<!DOCTYPE html>
         <button class="btn-reset" onclick="resetJunc()">분기점 리셋</button>
     </div>
     <div class="btn-row">
-        <button class="btn-reset" onclick="reroute(\'A→B\')" style="flex:1;background:#1a1a22;border:1px solid #f59e0b;color:#f59e0b;">A→B 우회</button>
-        <button class="btn-reset" onclick="reroute(\'A→C\')" style="flex:1;background:#1a1a22;border:1px solid #f59e0b;color:#f59e0b;">A→C 우회</button>
-        <button class="btn-reset" onclick="reroute(\'B→C\')" style="flex:1;background:#1a1a22;border:1px solid #f59e0b;color:#f59e0b;">B→C 우회</button>
+        <button class="btn-reset" onclick="reroute('A→B')" style="flex:1;background:#1a1a22;border:1px solid #f59e0b;color:#f59e0b;">A→B 우회</button>
+        <button class="btn-reset" onclick="reroute('A→C')" style="flex:1;background:#1a1a22;border:1px solid #f59e0b;color:#f59e0b;">A→C 우회</button>
+        <button class="btn-reset" onclick="reroute('B→C')" style="flex:1;background:#1a1a22;border:1px solid #f59e0b;color:#f59e0b;">B→C 우회</button>
     </div>
     <div class="sliders">
       <div class="slider-item">
-        <label>BASE_SPEED <span id="v-base">45</span></label>
-        <input type="range" min="10" max="80" value="45"
-               oninput="updateVal(\'v-base\',this.value);sendConfig(\'base_speed\',+this.value)">
+        <label>BASE_SPEED <span id="v-base">35</span></label>
+        <input type="range" min="10" max="80" value="35"
+               oninput="updateVal('v-base',this.value);sendConfig('base_speed',+this.value)">
       </div>
       <div class="slider-item">
-        <label>THRESH <span id="v-thresh">43</span></label>
-        <input type="range" min="20" max="200" value="43"
-               oninput="updateVal(\'v-thresh\',this.value);sendConfig(\'thresh\',+this.value)">
+        <label>THRESH <span id="v-thresh">80</span></label>
+        <input type="range" min="20" max="200" value="80"
+               oninput="updateVal('v-thresh',this.value);sendConfig('thresh',+this.value)">
       </div>
       <div class="slider-item">
-        <label>KP <span id="v-kp">0.80</span></label>
-        <input type="range" min="1" max="80" value="80"
-               oninput="updateVal(\'v-kp\',(this.value/100).toFixed(2));sendConfig(\'kp\',this.value/100)">
+        <label>KP <span id="v-kp">0.70</span></label>
+        <input type="range" min="1" max="80" value="70"
+               oninput="updateVal('v-kp',(this.value/100).toFixed(2));sendConfig('kp',this.value/100)">
       </div>
       <div class="slider-item">
         <label>KI <span id="v-ki">0.002</span></label>
         <input type="range" min="0" max="20" value="2"
-               oninput="updateVal(\'v-ki\',(this.value/1000).toFixed(3));sendConfig(\'ki\',this.value/1000)">
+               oninput="updateVal('v-ki',(this.value/1000).toFixed(3));sendConfig('ki',this.value/1000)">
       </div>
       <div class="slider-item">
         <label>DEAD_ZONE <span id="v-dz">15</span></label>
         <input type="range" min="0" max="80" value="15"
-               oninput="updateVal(\'v-dz\',this.value);sendConfig(\'dead_zone\',+this.value)">
+               oninput="updateVal('v-dz',this.value);sendConfig('dead_zone',+this.value)">
       </div>
       <div class="slider-item">
-        <label>ROI_TOP <span id="v-roi">0.70</span></label>
-        <input type="range" min="30" max="90" value="70"
-               oninput="updateVal(\'v-roi\',(this.value/100).toFixed(2));sendConfig(\'roi_top\',this.value/100)">
+        <label>ROI_TOP <span id="v-roi">0.65</span></label>
+        <input type="range" min="30" max="90" value="65"
+               oninput="updateVal('v-roi',(this.value/100).toFixed(2));sendConfig('roi_top',this.value/100)">
       </div>
       <div class="slider-item">
-        <label>FORWARD_TIME <span id="v-fwd">0.5</span>s</label>
-        <input type="range" min="1" max="30" value="5"
-               oninput="updateVal(\'v-fwd\',(this.value/10).toFixed(1));sendConfig(\'forward_time\',this.value/10)">
+        <label>FORWARD_TIME <span id="v-fwd">1.5</span>s</label>
+        <input type="range" min="1" max="30" value="15"
+               oninput="updateVal('v-fwd',(this.value/10).toFixed(1));sendConfig('forward_time',this.value/10)">
       </div>
       <div class="slider-item">
         <label>SPIN_SPEED <span id="v-spin">25</span></label>
         <input type="range" min="10" max="60" value="25"
-               oninput="updateVal(\'v-spin\',this.value);sendConfig(\'spin_speed\',+this.value)">
+               oninput="updateVal('v-spin',this.value);sendConfig('spin_speed',+this.value)">
       </div>
     </div>
     <div class="green-section">
@@ -686,27 +681,27 @@ HTML = '''<!DOCTYPE html>
         <div class="slider-item">
           <label>H_MIN <span id="v-hmin">30</span></label>
           <input type="range" min="20" max="60" value="30"
-                 oninput="updateVal(\'v-hmin\',this.value);sendConfig(\'green_h_min\',+this.value)">
+                 oninput="updateVal('v-hmin',this.value);sendConfig('green_h_min',+this.value)">
         </div>
         <div class="slider-item">
           <label>H_MAX <span id="v-hmax">85</span></label>
           <input type="range" min="60" max="100" value="85"
-                 oninput="updateVal(\'v-hmax\',this.value);sendConfig(\'green_h_max\',+this.value)">
+                 oninput="updateVal('v-hmax',this.value);sendConfig('green_h_max',+this.value)">
         </div>
         <div class="slider-item">
           <label>S_MIN <span id="v-smin">80</span></label>
           <input type="range" min="30" max="200" value="80"
-                 oninput="updateVal(\'v-smin\',this.value);sendConfig(\'green_s_min\',+this.value)">
+                 oninput="updateVal('v-smin',this.value);sendConfig('green_s_min',+this.value)">
         </div>
         <div class="slider-item">
           <label>V_MIN <span id="v-vmin">50</span></label>
           <input type="range" min="30" max="200" value="50"
-                 oninput="updateVal(\'v-vmin\',this.value);sendConfig(\'green_v_min\',+this.value)">
+                 oninput="updateVal('v-vmin',this.value);sendConfig('green_v_min',+this.value)">
         </div>
         <div class="slider-item">
           <label>MIN_AREA <span id="v-area">200</span></label>
           <input type="range" min="50" max="2000" value="200"
-                 oninput="updateVal(\'v-area\',this.value);sendConfig(\'green_min_area\',+this.value)">
+                 oninput="updateVal('v-area',this.value);sendConfig('green_min_area',+this.value)">
         </div>
       </div>
     </div>
@@ -714,45 +709,41 @@ HTML = '''<!DOCTYPE html>
 </div>
 <script>
 function updateVal(id, val) { document.getElementById(id).textContent = val; }
-function startDrive() { fetch(\'/start\', {method:\'POST\'}); }
-function stopDrive()  { fetch(\'/stop\',  {method:\'POST\'}); }
-function resetJunc()  { fetch(\'/reset\', {method:\'POST\'}); }
+function startDrive() { fetch('/start', {method:'POST'}); }
+function stopDrive()  { fetch('/stop',  {method:'POST'}); }
+function resetJunc()  { fetch('/reset', {method:'POST'}); }
 function reroute(r) {
-  fetch(\'/reroute\', {
-    method: \'POST\',
-    headers: {\'Content-Type\': \'application/json\'},
+  fetch('/reroute', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({route: r})
   });
 }
 function selectRoute(r) {
-  [\'A\',\'B\',\'C\'].forEach(x => {
-    document.getElementById(\'btn-\'+x).classList.toggle(\'active\', x === r);
+  ['A','B','C'].forEach(x => {
+    document.getElementById('btn-'+x).classList.toggle('active', x === r);
   });
-  sendConfig(\'route\', r);
+  sendConfig('route', r);
 }
 function sendConfig(key, value) {
-  fetch(\'/config\', {method:\'POST\', headers:{\'Content-Type\':\'application/json\'},
+  fetch('/config', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({[key]: value})});
 }
 function updateState() {
-  fetch(\'/state\').then(r=>r.json()).then(d=>{
-    document.getElementById(\'fps\').textContent    = (d.fps||\'--\')+\' fps\';
-    document.getElementById(\'action\').textContent = d.action||\'--\';
-    document.getElementById(\'green\').textContent  = (d.green_area||0)+\' px\';
-    document.getElementById(\'junc\').textContent   = d.junction_count || 0;
-    document.getElementById(\'route-state\').textContent = \'루트 \' + (d.route||\'--\');
+  fetch('/state').then(r=>r.json()).then(d=>{
+    document.getElementById('fps').textContent    = (d.fps||'--')+' fps';
+    document.getElementById('action').textContent = d.action||'--';
+    document.getElementById('green').textContent  = (d.green_area||0)+' px';
+    document.getElementById('junc').textContent   = d.junction_count || 0;
+    document.getElementById('route-state').textContent = '루트 ' + (d.route||'--');
     const err = d.error || 0;
-    const errEl = document.getElementById(\'error\');
-    errEl.textContent = (err > 0 ? \'+\' : \'\') + err;
-    errEl.className = \'value\' + (Math.abs(err) > 60 ? \' danger\' : Math.abs(err) > 20 ? \' warn\' : \'\');
+    const errEl = document.getElementById('error');
+    errEl.textContent = (err > 0 ? '+' : '') + err;
+    errEl.className = 'value' + (Math.abs(err) > 60 ? ' danger' : Math.abs(err) > 20 ? ' warn' : '');
     const pct = Math.min(Math.abs(err) / 160 * 50, 50);
-    const bar = document.getElementById(\'error-bar\');
-    if (err > 0) { bar.style.left=\'50%\'; bar.style.width=pct+\'%\'; bar.style.background=\'#f59e0b\'; }
-    else { bar.style.left=(50-pct)+\'%\'; bar.style.width=pct+\'%\'; bar.style.background=\'#4ade80\'; }
-    const dist = d.distance;
-    const ultraEl = document.getElementById(\'ultra\');
-    ultraEl.textContent = dist >= 0 ? dist + \' cm\' : \'--\';
-    ultraEl.className = \'value\' + (dist >= 0 && dist < 15 ? \' danger\' : dist >= 0 && dist < 30 ? \' warn\' : \'\');
+    const bar = document.getElementById('error-bar');
+    if (err > 0) { bar.style.left='50%'; bar.style.width=pct+'%'; bar.style.background='#f59e0b'; }
+    else { bar.style.left=(50-pct)+'%'; bar.style.width=pct+'%'; bar.style.background='#4ade80'; }
   }).catch(()=>{});
 }
 setInterval(updateState, 150);

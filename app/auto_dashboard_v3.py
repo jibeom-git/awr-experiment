@@ -12,7 +12,8 @@ sys.path.insert(0, '/home/pi/insite')
 # 🔑 [구글 제미나이 API 키 통합 관리 센터]
 # 새로운 계정으로 키를 발급받으시면 오직 여기 한 곳만 수정해 주시면 됩니다!
 # =====================================================================
-os.environ["GEMINI_API_KEY"] = "".strip()
+# 💡 기존의 빈 문자열 대입 대신 시스템에 등록된 키를 자동으로 읽어오도록 수정합니다.
+os.environ["GEMINI_API_KEY"] = os.environ.get("GEMINI_API_KEY", "").strip()
 
 current_key_debug = os.environ.get('GEMINI_API_KEY') or ""
 print(f"[Key-Debug] 현재 전역 API KEY 로드 성공: {current_key_debug[:10]}...")
@@ -623,50 +624,31 @@ def drive_loop():
         if not is_junction:
             green_seen = False
 
-        # -- 고정밀 차동 조향 보정 커널 매핑 구역 (친구분 오리지널 파라미터 준용) --
-        correction = 0
+        # -- 고정밀 차동 조향 보정 커널 매핑 구역 (요청사항 반영 수정 구역) --
         if cx is None:
-            integral = 0.0
-            spin_right(35) if lost_dir > 0 else spin_left(35)
+            # 💡 라인을 완전히 잃었을 때의 탐색 회전 속도도 35에서 23으로 하향 조절
+            spin_right(23) if lost_dir > 0 else spin_left(23)
             with lock: state["action"] = "라인유실_탐색모드"
         else:
             error = cx - CENTER_X
-            # 빨간 영역 80% 이내면 error 0으로 억제 (조향 안 함)
-            _dz = int(cfg["dead_zone"] * 2)
-            if abs(error) < _dz:
-                error = 0
-            integral = max(min(integral + error * dt, 150), -150)
-            
-            speed_scaler = max(0.4, 1.0 - (cruise_speed - 45) / 100.0)
-            dynamic_kp = cfg["kp"] * speed_scaler
-            correction = int(error * dynamic_kp + integral * cfg["ki"])
-            
-            max_allow_corr = max(15, cruise_speed - 20)
-            correction = max(min(correction, max_allow_corr), -max_allow_corr)
+            current_dead_zone = int(cfg["dead_zone"] * 2)
             lost_dir = 1 if error > 0 else (-1 if error < 0 else lost_dir)
 
-            current_dead_zone = int(cfg["dead_zone"] * 2)
-            
+            # 1. 초록점이 빨간 박스 내부(데드존)에 있을 때 -> 정선 직진
             if abs(error) < current_dead_zone:
                 go_forward(cruise_speed)
-                with lock: state["action"] = f"{action_state}(정선직진)"
+                with lock: state["action"] = f"{action_state}(박스내부:직진)"
+            
+            # 2. 초록점이 빨간 박스 외부로 나갔을 때 -> 중앙 빨간선까지 스핀 회전
             else:
+                # 💡 cfg에서 값이 없을 때 적용할 기본 대피 속도를 35에서 22로 감속 수정!
+                spin_speed = cfg.get("spin_speed", 22) 
                 if error > 0:
-                    left_wheel_speed = cruise_speed
-                    right_wheel_speed = max(cruise_speed - abs(correction), 20)
-                    motor.set_motor(1, 1, left_wheel_speed)
-                    motor.set_motor(2, 1, left_wheel_speed)
-                    motor.set_motor(3, 1, right_wheel_speed)
-                    motor.set_motor(4, 1, right_wheel_speed)
-                    with lock: state["action"] = f"{action_state}(우향조정:{abs(error)}px)"
+                    spin_right(spin_speed)
+                    with lock: state["action"] = f"{action_state}(우향 스핀복귀:{abs(error)}px)"
                 else:
-                    left_wheel_speed = max(cruise_speed - abs(correction), 20)
-                    right_wheel_speed = cruise_speed
-                    motor.set_motor(1, 1, left_wheel_speed)
-                    motor.set_motor(2, 1, left_wheel_speed)
-                    motor.set_motor(3, 1, right_wheel_speed)
-                    motor.set_motor(4, 1, right_wheel_speed)
-                    with lock: state["action"] = f"{action_state}(좌향조정:{abs(error)}px)"
+                    spin_left(spin_speed)
+                    with lock: state["action"] = f"{action_state}(좌향 스핀복귀:{abs(error)}px)"
 
         with lock:
             state["error"]  = cx - CENTER_X if cx else 0
@@ -755,13 +737,16 @@ def stop():
     with lock: state["current_direction"] = "stop"
     return jsonify({'status': 'stopped'})
 
+# ── Flask 웹 서빙 인터페이스 중 /command 라우트 내부 스레드 구역 수정 ──
 @app.route('/command', methods=['POST'])
 def command():
     data = request.get_json(force=True)
     user_text = data.get('text', '').strip()
-    if not user_text: return jsonify({'status': 'error', 'msg': '텍스트 누락'})
+    if not user_text: 
+        return jsonify({'status': 'error', 'msg': '텍스트 누락'})
 
     def _parse():
+        global g_junction_cooldown  
         try:
             from ai_core.commander import CommanderVLM
             cmd = CommanderVLM()
@@ -779,19 +764,28 @@ def command():
                 reason = f"빠른 주행 모드가 활성화되어 화물 중량별 최적 경로인 {route}루트로 진입합니다."
             
             config['user_mode'] = mode
-            if not config['running']:
-                config['route'] = route
-                with lock: state['route'] = route
+            config['route'] = route
             with lock:
+                state['route'] = route
                 state['cmd_result'] = f"[{mode.upper()}] {reason}"
                 state['user_mode'] = mode
+                
+            with g_junction_lock:
+                g_junction_cooldown = time.time() - 1.0  
+            
+            config["running"] = True 
+
         except Exception as e:
             fallback_mode = config.get('user_mode', 'safe')
             fallback_route = "B" if fallback_mode == "safe" else "A"
             with lock: 
-                state['cmd_result'] = "시스템 라우팅 예외 복구 적용"
+                state['cmd_result'] = f"시스템 라우팅 예외 복구 적용 -> {fallback_route}"
                 state['route'] = fallback_route
             config['route'] = fallback_route
+            
+            with g_junction_lock:
+                g_junction_cooldown = time.time() - 1.0
+            config["running"] = True
                         
     threading.Thread(target=_parse, daemon=True).start()
     return jsonify({'status': 'ok', 'msg': '분석 진행 중'})

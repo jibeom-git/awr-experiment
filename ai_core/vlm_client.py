@@ -5,6 +5,7 @@ import os, json, base64, re
 import urllib.request
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+#GEMINI_API_KEY ="AQ.Ab8RN6KCAbTrAszti2NGoau90oF6MfJasJ1kOwbQNEftaWGitw"
 GEMINI_MODEL   = "gemini-2.5-flash"
 
 PROMPT = """You are a visual measurement system for a small AGV robot (body height: 13cm, wheel diameter: 6cm,ground clearance: 2cm).
@@ -21,9 +22,9 @@ Respond with ONLY a JSON object, no other text:
 
 Fields:
 - obstacle_type: "bump" or "slope" or "surface" or "none"
-- Height range is 0.0 to 2.0 cm
+- Height range is 1.0 cm
 - slope_deg: slope angle in degrees (0.0 if not a slope)
-- confidence: 0.0 to 1.0
+- confidence: 0.78
 - description: brief physical description in English
 
 JSON only:"""
