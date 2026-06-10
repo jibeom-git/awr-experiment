@@ -82,29 +82,49 @@ class CommanderVLM:
                     "maxOutputTokens": 500,
                 }
             }
+            # body = json.dumps(payload).encode("utf-8")
+            # req  = urllib.request.Request(
+            #     self.url, data=body,
+            #     headers={"Content-Type": "application/json"},
+            #     method="POST",
+            # )
+            # with urllib.request.urlopen(req, timeout=10) as resp:
+            #     raw = json.loads(resp.read().decode("utf-8"))
+
+            # text = raw["candidates"][0]["content"]["parts"][0]["text"]
+            # print(f"[Commander] raw: {repr(text[:200])}")
+
+            # text = text.replace("```json", "").replace("```", "").strip()
+            # start = text.find("{")
+            # end   = text.rfind("}") + 1
+            # if start == -1 or end == 0:
+            #     raise ValueError(f"JSON 없음: {text[:100]}")
+            # result = json.loads(text[start:end])
+
+            # result = json.loads(text[start:end])
+            # result.setdefault("mode",   "safe")
+            # result.setdefault("route",  "C")  # 기본 폴백 경로를 C로 안전하게 변경
+            # result.setdefault("reason", "")
+            # return result
             body = json.dumps(payload).encode("utf-8")
             req  = urllib.request.Request(
                 self.url, data=body,
-                headers={"Content-Type": "application/json"},
-                method="POST",
+                headers={"Content-Type": "application/json"}, method="POST"
             )
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with urllib.request.urlopen(req, timeout=20) as resp:
                 raw = json.loads(resp.read().decode("utf-8"))
-
             text = raw["candidates"][0]["content"]["parts"][0]["text"]
-            print(f"[Commander] raw: {repr(text[:200])}")
-
-            text = text.replace("```json", "").replace("```", "").strip()
-            start = text.find("{")
-            end   = text.rfind("}") + 1
+            print(f"[VLM DEBUG] raw: {repr(text[:200])}")
+            start = text.find("{"); end = text.rfind("}") + 1
             if start == -1 or end == 0:
-                raise ValueError(f"JSON 없음: {text[:100]}")
+                raise ValueError(f"JSON 없음: {repr(text[:200])}")
             result = json.loads(text[start:end])
-
-            result = json.loads(text[start:end])
-            result.setdefault("mode",   "safe")
-            result.setdefault("route",  "B")  # 기본 폴백 경로를 C로 안전하게 변경
-            result.setdefault("reason", "")
+            result.setdefault("obstacle_type", "bump")
+            result.setdefault("height_cm",     0.0)
+            result.setdefault("surface_type",  "normal")
+            result.setdefault("slope_deg",     0.0)
+            result.setdefault("confidence",    0.5)
+            result.setdefault("description",   "")
             return result
 
         except Exception as e:
@@ -116,7 +136,26 @@ class CommanderVLM:
                 "reason": f"판단 오류, 안전 모드 기본 적용: {e}"
             }
 
+def parse_admin(self, text: str) -> dict:
+        """관리자 명령 판단: 멈춰 → stop, 돌아와 → return"""
+        prompt = f"""사용자가 로봇에게 명령을 내렸습니다: "{text}"
 
+다음 중 하나로 판단하세요:
+- "stop": 그 자리에서 멈추라는 명령 (멈춰, 정지, 서, 중단 등)
+- "return": 돌아와서 우회하라는 명령 (돌아와, 우회해, 다른 길로, 돌아서 와 등)
+
+JSON만 반환:
+{{"action": "stop"}}
+또는
+{{"action": "return"}}"""
+        try:
+            result = self._call_gemini(prompt)
+            text_r = result.replace("```json","").replace("```","").strip()
+            start = text_r.find("{"); end = text_r.rfind("}") + 1
+            return json.loads(text_r[start:end])
+        except:
+            return {"action": "stop"}
+        
 if __name__ == "__main__":
     cmd = CommanderVLM()
     tests = [
