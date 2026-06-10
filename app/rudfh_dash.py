@@ -1,4 +1,4 @@
-#python app/rudfh_dash.py
+#   python app/rudfh_dash.py
 
 
 import sys, os, time, threading, copy
@@ -37,13 +37,13 @@ ROUTES = {
 }
 
 config = {
-    "base_speed":     45,
+    "base_speed":     40,
     "turn_speed":     30,
-    "spin_speed":     25,
-    "thresh":         43,
+    "spin_speed":     30,
+    "thresh":         60,
     "roi_top":        0.7,
-    "dead_zone":      15,
-    "kp":             0.8,
+    "dead_zone":      10,
+    "kp":             3.0,
     "ki":             0.002,
     "running":        False,
     "route":          "A",
@@ -291,8 +291,8 @@ def execute_junction(action, cfg):
         spin_fn = spin_left if action == "left" else spin_right
 
         # 먼저 60도 고정 회전 (원래 선 벗어나기)
-        spin_fn(35)
-        time.sleep(1.5)
+        spin_fn(30)
+        time.sleep(1.2)
 
         # 그 다음 선이 중앙에 올 때까지 계속 회전 (최대 4초)
         fine_timeout = time.time() + 2.0
@@ -434,17 +434,38 @@ def drive_loop():
 
             lost_dir = 1 if error > 0 else (-1 if error < 0 else lost_dir)
 
+
             if abs(error) < cfg["dead_zone"]:
                 go_forward(cfg["base_speed"])
                 action = "직진"
             elif correction > 0:
-                right_speed = max(cfg["base_speed"] - abs(correction), cfg["turn_speed"])
-                turn_right(cfg["base_speed"], right_speed)
-                action = f"우회전 ({abs(correction)})"
+                if abs(error) > 80:
+                    spin_right(cfg["spin_speed"])
+                    action = f"급우회전({abs(error)})"
+                else:
+                    right_speed = max(cfg["base_speed"] - abs(correction), cfg["turn_speed"])
+                    turn_right(cfg["base_speed"], right_speed)
+                    action = f"우회전({abs(correction)})"
             else:
-                left_speed = max(cfg["base_speed"] - abs(correction), cfg["turn_speed"])
-                turn_left(left_speed, cfg["base_speed"])
-                action = f"좌회전 ({abs(correction)})"
+                if abs(error) > 80:
+                    spin_left(cfg["spin_speed"])
+                    action = f"급좌회전({abs(error)})"
+                else:
+                    left_speed = max(cfg["base_speed"] - abs(correction), cfg["turn_speed"])
+                    turn_left(left_speed, cfg["base_speed"])
+                    action = f"좌회전({abs(correction)})"
+
+            # if abs(error) < cfg["dead_zone"]:
+            #     go_forward(cfg["base_speed"])
+            #     action = "직진"
+            # elif correction > 0:
+            #     right_speed = max(cfg["base_speed"] - abs(correction), cfg["turn_speed"])
+            #     turn_right(cfg["base_speed"], right_speed)
+            #     action = f"우회전 ({abs(correction)})"
+            # else:
+            #     left_speed = max(cfg["base_speed"] - abs(correction), cfg["turn_speed"])
+            #     turn_left(left_speed, cfg["base_speed"])
+            #     action = f"좌회전 ({abs(correction)})"
 
         with lock:
             state["cx"]             = cx

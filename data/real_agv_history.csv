@@ -873,3 +873,7 @@ Timestamp,Current_Node,Assigned_Route,Obstacle_Type,Pass_Status,Applied_Speed,Sy
 2026-06-07 22:28:29,0,ROUTE_A,none,PATH_BLOCKED,0,VLM: obstacle impassable → rerouting,No yellow obstacle detected on the floor.,0.0,0.0
 2026-06-09 11:03:34,0,ROUTE_C,bump,CAUTIOUS_SLOWDOWN,50,VLM: passable obstacle → proceed at 50%,API 오류: HTTP Error 503: Service Unavailable,0.0,0.0
 2026-06-09 11:03:39,0,ROUTE_C,bump,CAUTIOUS_SLOWDOWN,50,VLM: passable obstacle → proceed at 50%,API 오류: HTTP Error 503: Service Unavailable,0.0,0.0
+2026-06-09 20:30:14,0,ROUTE_B,bump,PATH_BLOCKED,0,VLM: obstacle impassable → rerouting,API 오류: 'NoneType' object is not subscriptable,0.0,0.0
+2026-06-09 20:30:23,0,ROUTE_C,bump,CAUTIOUS_SLOWDOWN,50,VLM: passable obstacle → proceed at 50%,API 오류: 'NoneType' object is not subscriptable,0.0,0.0
+2026-06-09 20:30:32,0,ROUTE_C,bump,CAUTIOUS_SLOWDOWN,50,VLM: passable obstacle → proceed at 50%,API 오류: 'NoneType' object is not subscriptable,0.0,0.0
+2026-06-09 20:30:48,0,ROUTE_C,bump,CAUTIOUS_SLOWDOWN,50,VLM: passable obstacle → proceed at 50%,API 오류: 'NoneType' object is not subscriptable,0.0,0.0

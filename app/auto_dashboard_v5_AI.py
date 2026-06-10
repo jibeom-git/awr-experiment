@@ -1,7 +1,7 @@
-# app/auto_dashboard_v4.py
+# app/auto_dashboard_v5_AI.py
 # 자율 주행 대시보드 - 양방향 카메라 동시 송출 버그 완치 및 캘리브레이션 통합본
 #
-# 실행: python app/auto_dashboard_v4.py
+# 실행: python app/auto_dashboard_v5_AI.py
 # 접속: http://192.168.0.50:5004
 
 import sys, os, time, threading, copy, warnings
@@ -121,8 +121,8 @@ motor = MotorController()
 # print("[OK] AI 엔진 (지연 로드)")
 try:
     from ai_core.engine import AGVAIEngine
-    _ai_engine = None
-    AI_AVAILABLE = False
+    _ai_engine = AGVAIEngine()
+    AI_AVAILABLE = True
     print("[OK]  AI 사용 (엔진 미로드)")
 except Exception as e:
     _ai_engine = None
@@ -162,7 +162,7 @@ config = {
     "kp":             3.0,
     "ki":             0.002,
     "forward_time":   0.5,
-    "slope_speed":    75,
+    "slope_speed":    60,
     "green_h_min":    30,
     "green_h_max":    85,
     "green_s_min":    80,
@@ -391,287 +391,251 @@ def do_reroute(new_route: str):
 # ══════════════════════════════════════════════════════
 # AI 판단
 # ══════════════════════════════════════════════════════
-# def run_ai_decision(cur_route: str, frame_snap):
-#     if not AI_AVAILABLE:
-#         config["running"] = True
-#         return
-
-#     try:
-#         with lock:
-#             state["ai_status"] = "분석중..."
-
-#         engine = _ai_engine
-#         engine.mode = config.get("user_mode", "safe").upper()
-#         # 현재 경로 강제 설정 (engine 내부 초기화 방지)
-#         route_key = cur_route.split("→")[-1] if "→" in cur_route else cur_route
-#         engine.active_route = f"ROUTE_{route_key}"
-#         engine._route_initialized = True
-#         engine.route_availability = {"A": True, "B": True, "C": True}
-
-#         pitch = 0.0
-#         if imu is not None:
-#             accel = imu.get_accel()
-#             pitch = float(accel.get("x", 0.0))
-
-#         with lock:
-#             dist = state["distance"]
-
-#         sensor_snapshot = {
-#             "pitch":         pitch,
-#             "weight_g":      get_weight_g(),
-#             "distance_cm":   dist,
-#             "node_trigger":  False,
-#             "current_route": cur_route,
-#             "frame":         frame_snap,
-#         }
-
-#         result = engine.evaluate_state_and_calculate_output(sensor_snapshot, frame_snap)
-
-#         ai_state  = result.get("state", "--")
-#         ai_route  = result.get("route", "--")
-#         ai_speed  = result.get("speed_limit_pct", config["base_speed"])
-
-#         # Gemini 결과 추출
-#         vlm = engine.last_vlm_result if hasattr(engine, 'last_vlm_result') else {}
-#         gemini_type   = vlm.get("obstacle_type", "--")
-#         gemini_height = vlm.get("height_cm", "--")
-#         gemini_conf   = vlm.get("confidence", "--")
-
-#         # XGBoost 레이블 추출 (state에서 파싱)
-#         xgb_label = "pass"
-#         if "BLOCK" in ai_state or "REROUTE" in ai_state:
-#             xgb_label = "detour"
-#         elif "CAUTIOUS" in ai_state:
-#             xgb_label = "cautious"
-
-#         with lock:
-#             state["ai_status"]    = ai_state
-#             state["gemini_type"]  = str(gemini_type)
-#             state["gemini_height"]= str(gemini_height)
-#             state["gemini_conf"]  = f"{float(gemini_conf)*100:.0f}%" if gemini_conf != "--" else "--"
-#             state["xgb_label"]    = xgb_label
-#             state["ai_action"]    = ai_state
-
-#         print(f"[AI] {ai_state} | route={ai_route} | speed={ai_speed}")
-
-#         if ai_state in ("PATH_BLOCKED", "REROUTING_RUN"):
-#             route_key = ai_route.replace("ROUTE_", "")
-#             reroute_key = (cur_route, route_key)
-#             new_route_str = DETOUR_MAP.get(reroute_key)
-#             if new_route_str:
-#                 threading.Thread(target=do_reroute, args=(new_route_str,),
-#                                  daemon=True, name="reroute").start()
-#             else:
-#                 config["running"] = True
-
-#         elif ai_state == "CRITICAL_STOP":
-#             motor.motorStop()
-#             config["running"] = False
-#             with lock:
-#                 state["action"] = "비상정지"
-
-#         else:
-#             original_speed = config["base_speed"]
-#             if ai_speed and int(ai_speed) < original_speed:
-#                 config["base_speed"] = max(10, int(ai_speed))
-#                 config["running"] = True
-
-#                 def restore_speed(orig=original_speed):
-#                     time.sleep(3.0)
-#                     config["base_speed"] = orig
-#                     print(f"[AI] 속도 복귀: {orig}%")
-
-#                 threading.Thread(target=restore_speed, daemon=True).start()
-#             else:
-#                 config["running"] = True
-
-#     except Exception as e:
-#         import traceback
-#         print(f"[AI 오류] {e}")
-#         traceback.print_exc()
-#         config["running"] = True
-#         with lock:
-#             state["ai_status"] = f"오류: {str(e)[:30]}"
-
 def run_ai_decision(cur_route: str, frame_snap):
-    """규칙 기반 장애물 판단"""
+    if not AI_AVAILABLE:
+        config["running"] = True
+        return
+
     try:
         with lock:
             state["ai_status"] = "분석중..."
 
-        # # Gemini로 장애물 높이 측정
-        # height_cm = 1.0
-        # obs_type  = "1cm"
-        # with lock:
-        #     state["gemini_type"]   = obs_type
-        #     state["gemini_height"] = str(height_cm)
-        #     state["gemini_conf"]   = "76%"
-        try:
-            import cv2 as _cv2
-            from ai_core.vlm_client import VLMClient
-            vlm = VLMClient()
-            _, jpeg = _cv2.imencode('.jpg', frame_snap, [_cv2.IMWRITE_JPEG_QUALITY, 85])
-            result = vlm.analyze(jpeg.tobytes())
-            height_cm = float(result.get("height_cm", 0.0))
-            obs_type  = result.get("obstacle_type", "none")
-            with lock:
-                state["gemini_type"]   = obs_type
-                state["gemini_height"] = str(height_cm)
-                state["gemini_conf"]   = f"{float(result.get('confidence',0))*100:.0f}%"
-        except Exception as e:
-            print(f"[VLM] 오류: {e}")
+        engine = _ai_engine
+        engine.mode = config.get("user_mode", "safe").upper()
+        # 현재 경로 강제 설정 (engine 내부 초기화 방지)
+        route_key = cur_route.split("→")[-1] if "→" in cur_route else cur_route
+        engine.active_route = f"ROUTE_{route_key}"
+        engine._route_initialized = True
+        engine.route_availability = {"A": True, "B": True, "C": True}
 
-        mode   = config.get("user_mode", "safe").lower()
-        weight = get_weight_g()
-        route  = cur_route.split("→")[-1] if "→" in cur_route else cur_route
-        heavy  = weight >= 130.0
-
-        # 장애물 분류
-        if obs_type == "none" or height_cm == 0.0:
-            bump = "none"
-        elif height_cm <= 1.2:
-            bump = "1cm"
-        else:
-            bump = "2cm"
-
-        print(f"[Rule] mode={mode} route={route} weight={weight:.0f}g heavy={heavy} bump={bump}")
-
-        # ── 규칙표 적용 ──────────────────────────────────────
-        action = "pass"
-        speed  = config["base_speed"]
-
-        if mode == "fast":
-            if not heavy:
-                if route == "A":
-                    if bump == "none":   action, speed = "pass",   60
-                    elif bump == "1cm":  action = "detour"
-                    elif bump == "2cm":  action = "detour"
-                elif route == "B":
-                    if bump == "none":   action, speed = "pass",   config["base_speed"]
-                    elif bump == "1cm":  action, speed = "pass",   70
-                    elif bump == "2cm":  action = "detour"
-                elif route == "C":
-                    if bump == "none":   action, speed = "pass",   config["base_speed"]
-                    elif bump == "1cm":  action, speed = "pass",   70
-                    
-                    elif bump == "2cm":  action = "stop"
-            else:  # heavy
-                if route == "A":
-                    action = "detour"
-                elif route == "B":
-                    if bump == "none":   action, speed = "pass",   config["base_speed"]
-                    elif bump == "1cm":  action = "detour"
-                    elif bump == "2cm":  action = "detour"
-                elif route == "C":
-                    if bump == "none":   action, speed = "pass",   config["base_speed"]
-                    elif bump == "1cm":  action, speed = "pass",   70
-                    elif bump == "2cm":  action = "stop"
-
-        else:  # safe
-            if not heavy:
-                if route == "B":
-                    if bump == "none":   action, speed = "pass",   config["base_speed"]
-                    elif bump == "1cm":  action, speed = "pass",   70
-                    elif bump == "2cm":  action = "detour"
-                elif route == "C":
-                    if bump == "none":   action, speed = "pass",   config["base_speed"]
-                    elif bump == "1cm":  action, speed = "pass",   70
-                    elif bump == "1.3cm":  action, speed = "pass",   70
-                    elif bump == "1.4cm":  action, speed = "pass",   70
-                    elif bump == "1.5cm":  action, speed = "pass",   70
-                    elif bump == "1.6cm":  action, speed = "pass",   70
-                    elif bump == "1.7cm":  action, speed = "pass",   70
-                    elif bump == "2cm":  action = "stop"
-            else:  # heavy
-                if route == "B":
-                    if bump == "none":   action, speed = "pass",   config["base_speed"]
-                    elif bump == "1cm":  action = "detour"
-                    elif bump == "1.3cm":  action, speed = "pass",   70
-                    elif bump == "1.4cm":  action, speed = "pass",   70
-                    elif bump == "1.5cm":  action, speed = "pass",   70
-                    elif bump == "1.6cm":  action, speed = "pass",   70
-                    elif bump == "1.7cm":  action, speed = "pass",   70
-                    elif bump == "2cm":  action = "detour"
-                elif route == "C":
-                    if bump == "none":   action, speed = "pass",   config["base_speed"]
-                    elif bump == "1cm":  action, speed = "pass",   70
-                    elif bump == "2cm":  action = "stop"
-
-        print(f"[Rule] action={action} speed={speed}")
+        pitch = 0.0
+        if imu is not None:
+            accel = imu.get_accel()
+            pitch = float(accel.get("x", 0.0))
 
         with lock:
-            state["xgb_label"] = "pass" if action == "pass" else \
-                                  "detour" if action == "detour" else "cautious"
-            state["ai_status"] = "CAUTIOUS_BUMP"    if action == "pass" else \
-                                  "REROUTING_RUN"    if action == "detour" else \
-                                  "CAUTIOUS_SLOWDOWN"
+            dist = state["distance"]
 
-        # ── 행동 실행 ─────────────────────────────────────────
-        DETOUR_MAP_RULE = {"A": "B", "B": "C"}
+        sensor_snapshot = {
+            "pitch":         pitch,
+            "weight_g":      get_weight_g(),
+            "distance_cm":   dist,
+            "node_trigger":  False,
+            "current_route": cur_route,
+            "frame":         frame_snap,
+        }
 
-        if action == "detour":
-            next_r = DETOUR_MAP_RULE.get(route)
-            if next_r:
-                new_route_str = f"{route}→{next_r}"
+        result = engine.evaluate_state_and_calculate_output(sensor_snapshot, frame_snap)
+
+        ai_state  = result.get("state", "--")
+        ai_route  = result.get("route", "--")
+        ai_speed  = result.get("speed_limit_pct", config["base_speed"])
+
+        # Gemini 결과 추출
+        vlm = engine.last_vlm_result if hasattr(engine, 'last_vlm_result') else {}
+        gemini_type   = vlm.get("obstacle_type", "--")
+        gemini_height = vlm.get("height_cm", "--")
+        gemini_conf   = vlm.get("confidence", "--")
+
+        # XGBoost 레이블 추출 (state에서 파싱)
+        xgb_label = "pass"
+        if "BLOCK" in ai_state or "REROUTE" in ai_state:
+            xgb_label = "detour"
+        elif "CAUTIOUS" in ai_state:
+            xgb_label = "cautious"
+
+        with lock:
+            state["ai_status"]    = ai_state
+            state["gemini_type"]  = str(gemini_type)
+            state["gemini_height"]= str(gemini_height)
+            state["gemini_conf"]  = f"{float(gemini_conf)*100:.0f}%" if gemini_conf != "--" else "--"
+            state["xgb_label"]    = xgb_label
+            state["ai_action"]    = ai_state
+
+        print(f"[AI] {ai_state} | route={ai_route} | speed={ai_speed}")
+
+        if ai_state in ("PATH_BLOCKED", "REROUTING_RUN"):
+            route_key = ai_route.replace("ROUTE_", "")
+            reroute_key = (cur_route, route_key)
+            new_route_str = DETOUR_MAP.get(reroute_key)
+            if new_route_str:
                 threading.Thread(target=do_reroute, args=(new_route_str,),
                                  daemon=True, name="reroute").start()
             else:
                 config["running"] = True
 
-        elif action == "stop":
+        elif ai_state == "CRITICAL_STOP":
             motor.motorStop()
             config["running"] = False
             with lock:
-                state["action"] = "최종정지"
+                state["action"] = "비상정지"
 
-        else:  # pass
+        else:
             original_speed = config["base_speed"]
-            config["base_speed"] = speed
-            config["running"] = True
+            if ai_speed and int(ai_speed) < original_speed:
+                config["base_speed"] = max(10, int(ai_speed))
+                config["running"] = True
 
-            def restore_speed(orig=original_speed):
-                time.sleep(3.0)
-                config["base_speed"] = orig
-                print(f"[Rule] 속도 복귀: {orig}%")
+                def restore_speed(orig=original_speed):
+                    time.sleep(3.0)
+                    config["base_speed"] = orig
+                    print(f"[AI] 속도 복귀: {orig}%")
 
-            threading.Thread(target=restore_speed, daemon=True).start()
-
-            # C경로 + 장애물일 때만 헛바퀴 감지
-            def monitor_crossing(orig=original_speed, r=route, b=bump):
-                if r != "C" or b not in ("1cm", "2cm") or imu is None:
-                    return
-                time.sleep(0.5)
-                samples = []
-                for _ in range(20):  # 2초
-                    try:
-                        accel = imu.get_accel()
-                        samples.append(accel['x'])
-                    except:
-                        pass
-                    time.sleep(0.1)
-                if len(samples) >= 5:
-                    variation = max(samples) - min(samples)
-                    print(f"[Monitor] IMU 변화량: {variation:.4f}")
-                    if variation < 0.03:
-                        print("[Monitor] 헛바퀴 감지 → 관리자 호출")
-                        motor.motorStop()
-                        config["running"] = False
-                        config["base_speed"] = orig
-                        with lock:
-                            state["ai_status"] = "⚠️ 관리자 호출"
-                            state["action"]    = "장애물 통과 실패"
-                            state["xgb_label"] = "cautious"
-
-            threading.Thread(target=monitor_crossing, daemon=True).start()
+                threading.Thread(target=restore_speed, daemon=True).start()
+            else:
+                config["running"] = True
 
     except Exception as e:
         import traceback
-        print(f"[Rule 오류] {e}")
+        print(f"[AI 오류] {e}")
         traceback.print_exc()
         config["running"] = True
+        with lock:
+            state["ai_status"] = f"오류: {str(e)[:30]}"
     finally:
         drive_loop._ai_running = False
         drive_loop._ai_cooldown = time.time() + 5.0
+
+# def run_ai_decision(cur_route: str, frame_snap):
+#     """규칙 기반 장애물 판단"""
+#     try:
+#         with lock:
+#             state["ai_status"] = "분석중..."
+
+#         # # Gemini로 장애물 높이 측정
+#         # height_cm = 1.0
+#         # obs_type  = "1cm"
+#         # with lock:
+#         #     state["gemini_type"]   = obs_type
+#         #     state["gemini_height"] = str(height_cm)
+#         #     state["gemini_conf"]   = "80%"
+#         try:
+#             import cv2 as _cv2
+#             from ai_core.vlm_client import VLMClient
+#             vlm = VLMClient()
+#             _, jpeg = _cv2.imencode('.jpg', frame_snap, [_cv2.IMWRITE_JPEG_QUALITY, 85])
+#             result = vlm.analyze(jpeg.tobytes())
+#             height_cm = float(result.get("height_cm", 0.0))
+#             obs_type  = result.get("obstacle_type", "none")
+#             with lock:
+#                 state["gemini_type"]   = obs_type
+#                 state["gemini_height"] = str(height_cm)
+#                 state["gemini_conf"]   = f"{float(result.get('confidence',0))*100:.0f}%"
+#         except Exception as e:
+#             print(f"[VLM] 오류: {e}")
+
+#         mode   = config.get("user_mode", "safe").lower()
+#         weight = get_weight_g()
+#         route  = cur_route.split("→")[-1] if "→" in cur_route else cur_route
+#         heavy  = weight >= 130.0
+
+#         # 장애물 분류
+#         if obs_type == "none" or height_cm == 0.0:
+#             bump = "none"
+#         elif height_cm <= 1.2:
+#             bump = "1cm"
+#         else:
+#             bump = "2cm"
+
+#         print(f"[Rule] mode={mode} route={route} weight={weight:.0f}g heavy={heavy} bump={bump}")
+
+#         # ── 규칙표 적용 ──────────────────────────────────────
+#         action = "pass"
+#         speed  = config["base_speed"]
+
+#         if mode == "fast":
+#             if not heavy:
+#                 if route == "A":
+#                     if bump == "none":   action, speed = "pass",   60
+#                     elif bump == "1cm":  action = "detour"
+#                     elif bump == "2cm":  action = "detour"
+#                 elif route == "B":
+#                     if bump == "none":   action, speed = "pass",   config["base_speed"]
+#                     elif bump == "1cm":  action, speed = "pass",   70
+#                     elif bump == "2cm":  action = "detour"
+#                 elif route == "C":
+#                     if bump == "none":   action, speed = "pass",   config["base_speed"]
+#                     elif bump == "1cm":  action, speed = "pass",   70
+#                     elif bump == "2cm":  action = "stop"
+#             else:  # heavy
+#                 if route == "A":
+#                     action = "detour"
+#                 elif route == "B":
+#                     if bump == "none":   action, speed = "pass",   config["base_speed"]
+#                     elif bump == "1cm":  action = "detour"
+#                     elif bump == "2cm":  action = "detour"
+#                 elif route == "C":
+#                     if bump == "none":   action, speed = "pass",   config["base_speed"]
+#                     elif bump == "1cm":  action, speed = "pass",   70
+#                     elif bump == "2cm":  action = "stop"
+
+#         else:  # safe
+#             if not heavy:
+#                 if route == "B":
+#                     if bump == "none":   action, speed = "pass",   config["base_speed"]
+#                     elif bump == "1cm":  action, speed = "pass",   70
+#                     elif bump == "2cm":  action = "detour"
+#                 elif route == "C":
+#                     if bump == "none":   action, speed = "pass",   config["base_speed"]
+#                     elif bump == "1cm":  action, speed = "pass",   70
+#                     elif bump == "2cm":  action = "stop"
+#             else:  # heavy
+#                 if route == "B":
+#                     if bump == "none":   action, speed = "pass",   config["base_speed"]
+#                     elif bump == "1cm":  action = "detour"
+#                     elif bump == "2cm":  action = "detour"
+#                 elif route == "C":
+#                     if bump == "none":   action, speed = "pass",   config["base_speed"]
+#                     elif bump == "1cm":  action, speed = "pass",   70
+#                     elif bump == "2cm":  action = "stop"
+
+#         print(f"[Rule] action={action} speed={speed}")
+
+#         with lock:
+#             state["xgb_label"] = "pass" if action == "pass" else \
+#                                   "detour" if action == "detour" else "cautious"
+#             state["ai_status"] = "CAUTIOUS_BUMP"    if action == "pass" else \
+#                                   "REROUTING_RUN"    if action == "detour" else \
+#                                   "CAUTIOUS_SLOWDOWN"
+
+#         # ── 행동 실행 ─────────────────────────────────────────
+#         DETOUR_MAP_RULE = {"A": "B", "B": "C"}
+
+#         if action == "detour":
+#             next_r = DETOUR_MAP_RULE.get(route)
+#             if next_r:
+#                 new_route_str = f"{route}→{next_r}"
+#                 threading.Thread(target=do_reroute, args=(new_route_str,),
+#                                  daemon=True, name="reroute").start()
+#             else:
+#                 config["running"] = True
+
+#         elif action == "stop":
+#             motor.motorStop()
+#             config["running"] = False
+#             with lock:
+#                 state["action"] = "최종정지"
+
+#         else:  # pass
+#             original_speed = config["base_speed"]
+#             config["base_speed"] = speed
+#             config["running"] = True
+
+#             def restore_speed(orig=original_speed):
+#                 time.sleep(3.0)
+#                 config["base_speed"] = orig
+#                 print(f"[Rule] 속도 복귀: {orig}%")
+
+#             threading.Thread(target=restore_speed, daemon=True).start()
+
+#     except Exception as e:
+#         import traceback
+#         print(f"[Rule 오류] {e}")
+#         traceback.print_exc()
+#         config["running"] = True
+#     finally:
+#         drive_loop._ai_running = False
+#         drive_loop._ai_cooldown = time.time() + 5.0
 
 # ══════════════════════════════════════════════════════
 # 백그라운드 스레드
@@ -1476,8 +1440,7 @@ function poll() {
     aiEl.className = 'ai-status-bar' +
       (aiS.includes('분석') ? ' analyzing' :
        aiS.includes('BLOCK')||aiS.includes('REROUTE') ? ' detour' :
-       aiS.includes('NORMAL')||aiS.includes('CAUTIOUS') ? ' pass' :
-       aiS.includes('관리자') ? ' detour' : '');
+       aiS.includes('NORMAL')||aiS.includes('CAUTIOUS') ? ' pass' : '');
 
     document.getElementById('g-type').textContent   = d.gemini_type   || '--';
     document.getElementById('g-height').textContent = (d.gemini_height || '--') +

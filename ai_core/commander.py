@@ -36,7 +36,7 @@ Rules:
 
 Few-shot Examples (Strictly follow this mapping):
 Input: "물건 떨어뜨리면 안돼"
-Output: {"mode":"safe","route":"B","reason":"안전 주행을 위해 B경로를 선택합니다."}
+Output: {"mode":"safe","route":"C","reason":"안전 주행을 위해 C경로를 선택합니다."}
 
 Input: "빨리 가줘"
 Output: {"mode":"fast","route":"A","reason":"신속한 배송이 필요하므로 최단 거리인 A경로를 선택합니다."}

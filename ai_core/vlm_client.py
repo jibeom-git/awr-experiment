@@ -7,23 +7,26 @@ import urllib.request
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL   = "gemini-2.5-flash"
 
-PROMPT = """You are a visual measurement system for a small AGV robot (body height: 13cm, wheel diameter: 6cm,ground clearance: 2cm).
+PROMPT = """You are a visual measurement system for a small AGV robot (body height: 13cm, wheel diameter: 6cm, ground clearance: 2cm).
 
+You have been given reference images showing obstacles of known heights (0.0cm, 1.0cm, 2.0cm) with a ruler for scale.
 
-Analyze the obstacle in the image and extract physical measurements ONLY.
-Do NOT judge whether the robot can pass. Just measure and describe.
+Compare the NEW obstacle image against these references and estimate its height.
 
-IMPORTANT: Height must be between 0.0 and 2.0 cm ONLY. Never return values above 2.0.
-.
+IMPORTANT:
+- Output height_cm between 1.0 and 2.0 only (decimals allowed, e.g. 1.4, 1.6)
+- Use the ruler and reference images to calibrate your estimate
+- Do NOT judge passability, just measure
 
 Respond with ONLY a JSON object, no other text:
-{"obstacle_type":"bump","height_cm":2.0,"surface_type":"normal","slope_deg":0.0,"confidence":0.85,"description":"black speed bump, estimated 2cm high"}
+{"obstacle_type":"bump","height_cm":1.3,"surface_type":"normal","slope_deg":0.0,"confidence":0.85,"description":"black speed bump, estimated 1.5cm high"}
 
 Fields:
 - obstacle_type: "bump" or "slope" or "surface" or "none"
-- Height range is 1.0 cm
+- height_cm: float between 1.0 and 2.0
+- surface_type: "normal" or "rough" or "vinyl"
 - slope_deg: slope angle in degrees (0.0 if not a slope)
-- confidence: 0.78
+- confidence: 0.0 to 1.0
 - description: brief physical description in English
 
 JSON only:"""
@@ -60,35 +63,29 @@ class VLMClient:
 
     def _call_api(self, image_bytes: bytes) -> dict:
         b64_image = base64.b64encode(image_bytes).decode("utf-8")
+
+        # 레퍼런스 이미지 로드
+        ref_parts = []
+        ref_dir = os.path.join(os.path.dirname(__file__), "references")
+        for fname, label in [("flat.jpg", "0.0"), ("1cm.jpg", "1.0"), ("2cm.jpg", "2.0")]:
+            fpath = os.path.join(ref_dir, fname)
+            if os.path.exists(fpath):
+                with open(fpath, "rb") as f:
+                    b64_ref = base64.b64encode(f.read()).decode()
+                ref_parts += [
+                    {"text": f"Reference: this obstacle is {label}cm high"},
+                    {"inline_data": {"mime_type": "image/jpeg", "data": b64_ref}}
+                ]
+
         payload = {
             "contents": [{
-                "parts": [
-                    {"text": PROMPT},
+                "parts": ref_parts + [
+                    {"text": "Now measure the obstacle height in this new image. " + PROMPT},
                     {"inline_data": {"mime_type": "image/jpeg", "data": b64_image}}
                 ]
             }],
             "generationConfig": {"temperature": 0.0, "maxOutputTokens": 2048}
         }
-        body = json.dumps(payload).encode("utf-8")
-        req  = urllib.request.Request(
-            self.url, data=body,
-            headers={"Content-Type": "application/json"}, method="POST"
-        )
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            raw = json.loads(resp.read().decode("utf-8"))
-        text = raw["candidates"][0]["content"]["parts"][0]["text"]
-        print(f"[VLM DEBUG] raw: {repr(text[:200])}")
-        start = text.find("{"); end = text.rfind("}") + 1
-        if start == -1 or end == 0:
-            raise ValueError(f"JSON 없음: {repr(text[:200])}")
-        result = json.loads(text[start:end])
-        result.setdefault("obstacle_type", "bump")
-        result.setdefault("height_cm",     0.0)
-        result.setdefault("surface_type",  "normal")
-        result.setdefault("slope_deg",     0.0)
-        result.setdefault("confidence",    0.5)
-        result.setdefault("description",   "")
-        return result
 
     # engine.py 하위호환용
     def analyze_obstacle(self, image_bytes, context=None, mode=None) -> dict:
